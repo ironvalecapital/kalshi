@@ -2,13 +2,8 @@ services:
   - type: worker
     name: kalshi-weather-bot
     runtime: python
-    plan: starter
     buildCommand: pip install -r requirements.txt && pip install -e .
-    startCommand: >
-      bash -lc 'printf "%s" "$KALSHI_PRIVATE_KEY_PEM" > /opt/render/project/src/kalshi_private_key.pem
-      && chmod 600 /opt/render/project/src/kalshi_private_key.pem
-      && export KALSHI_PRIVATE_KEY_PATH=/opt/render/project/src/kalshi_private_key.pem
-      && python -m kalshi_bot.cli run-weather --live --i-understand-risk --cycles 0 --sleep 10'
+    startCommand: bash -lc "printf \"%s\" \"$KALSHI_PRIVATE_KEY_PEM\" > /opt/render/project/src/kalshi_private_key.pem && chmod 600 /opt/render/project/src/kalshi_private_key.pem && export KALSHI_PRIVATE_KEY_PATH=/opt/render/project/src/kalshi_private_key.pem && python -m kalshi_bot.cli run-weather --live --i-understand-risk --cycles 0 --sleep 10"
     envVars:
       - key: KALSHI_API_KEY_ID
         sync: false
