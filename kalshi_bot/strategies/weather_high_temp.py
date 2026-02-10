@@ -112,6 +112,7 @@ def run_weather_strategy(
             audit.log("decision", "no market pick", {})
             time.sleep(sleep_s)
             continue
+        audit.log("heartbeat", "weather cycle", {"candidates": len(candidates)})
         for cand in candidates:
             market = data_client.get_market(cand.ticker)
             mapping = resolve_market_mapping(settings, market, overrides)
