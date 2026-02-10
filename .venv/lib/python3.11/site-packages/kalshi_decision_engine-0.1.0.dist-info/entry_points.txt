@@ -1,0 +1,2 @@
+[console_scripts]
+kalshi-bot = kalshi_bot.cli:app

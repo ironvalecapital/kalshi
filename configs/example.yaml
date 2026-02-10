@@ -1,0 +1,74 @@
+api_key_id: null
+private_key_path: null
+use_sdk: true
+
+data:
+  env: prod # if your key is prod
+  api_base_demo: "https://demo-api.kalshi.co/trade-api/v2"
+  api_base_prod: "https://api.elections.kalshi.com/trade-api/v2"
+  ws_url_demo: "wss://demo-api.kalshi.co/trade-api/ws/v2"
+  ws_url_prod: "wss://api.elections.kalshi.com/trade-api/ws/v2"
+
+rate_limit:
+  tier: basic
+
+weather:
+  forecast_sigma_f: 2.0
+  min_fill_prob: 0.25
+  max_spread_cents: 12.0
+  min_edge_after_fees_cents: 1.5
+  min_time_to_close_hours: 2.0
+  max_time_to_close_hours: 48.0
+  w_trades: 1.0
+  w_volume: 0.1
+  w_spread: 0.05
+  default_city: "NYC"
+  city_map:
+    NYC: {lat: 40.7128, lon: -74.0060}
+    CHI: {lat: 41.8781, lon: -87.6298}
+    DC: {lat: 38.9072, lon: -77.0369}
+    LA: {lat: 34.0522, lon: -118.2437}
+    BOS: {lat: 42.3601, lon: -71.0589}
+    PHL: {lat: 39.9526, lon: -75.1652}
+    ATL: {lat: 33.7490, lon: -84.3880}
+    MIA: {lat: 25.7617, lon: -80.1918}
+    DEN: {lat: 39.7392, lon: -104.9903}
+    SEA: {lat: 47.6062, lon: -122.3321}
+    SFO: {lat: 37.7749, lon: -122.4194}
+    DAL: {lat: 32.7767, lon: -96.7970}
+  keywords: ["WEATHER", "TEMP", "TEMPERATURE", "HIGH TEMPERATURE", "PRECIP", "SNOW", "RAIN"]
+  market_overrides: {}
+  min_trades_24h: 0
+  top_n: 200
+  bid_improve_cents: 1
+  max_depth_levels: 3
+  allow_cross_spread: false
+  min_rr: 1.5
+  max_order_size: 10
+  ev_size_scale_cents: 3.0
+  depth_fill_weight: 0.005
+  trades_fill_weight: 0.02
+  regime_t1_hours: 24.0
+  regime_t2_hours: 2.0
+  near_close_min_rr: 2.0
+  near_close_min_ev_cents: 2.5
+
+risk:
+  max_daily_loss_usd: 100.0
+  max_position_per_market_usd: 200.0
+  max_open_orders: 10
+  max_order_size_contracts: 20
+  max_notional_usd: 500.0
+  max_trade_freq_per_market_seconds: 10
+  cooldown_seconds_after_loss: 300
+  max_consecutive_losses: 3
+  pause_on_spread_wide: true
+  spread_wide_threshold_cents: 10.0
+
+execution:
+  prefer_maker: true
+  min_order_interval_seconds: 5
+  require_edge_cents: 2.0
+  maker_fee_rate: 0.0175
+  taker_fee_rate: 0.07
+  max_cancels_per_minute: 10
