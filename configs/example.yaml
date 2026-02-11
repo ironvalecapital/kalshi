@@ -104,3 +104,5 @@ sports:
   auto_pick_use_summary: true
   auto_pick_top_n: 50
   daily_report_interval_sec: 3600
+  stale_order_max_age_sec: 300
+  stale_order_cancel_edge_cents: 0.1

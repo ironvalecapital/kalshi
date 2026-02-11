@@ -6,6 +6,7 @@ import math
 import threading
 import time
 from pathlib import Path
+from dateutil import parser as date_parser
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -111,6 +112,7 @@ def run_sports_strategy(
     open_order_id: Optional[str] = None
     last_report_ts = time.time()
     cycle_stats = {"decisions": 0, "orders": 0, "abstains": 0}
+    last_edge_by_market: dict[str, float] = {}
 
     while True:
         if exec_engine._kill_switch():
@@ -341,6 +343,7 @@ def run_sports_strategy(
         write_decision_report(settings, report)
         ledger.record_decision(pick.ticker, "sports_orderflow", report, report.get("features", {}), ev_after, action, 1, {}, order_result)
         audit.log("decision", "sports orderflow", report)
+        last_edge_by_market[pick.ticker] = edge_cents
         cycle_stats["decisions"] += 1
         if action == "ABSTAIN":
             cycle_stats["abstains"] += 1
@@ -361,6 +364,28 @@ def run_sports_strategy(
             report_path.write_text(json.dumps(payload, indent=2))
             last_report_ts = now
             cycle_stats = {"decisions": 0, "orders": 0, "abstains": 0}
+
+        # Stale order cancellation
+        try:
+            orders = data_client.get_orders(status="open")
+            for o in orders.get("orders", []):
+                ticker = o.get("ticker") or o.get("market_ticker")
+                if not ticker:
+                    continue
+                edge = last_edge_by_market.get(ticker, 0.0)
+                created = o.get("created_time") or o.get("created_ts") or o.get("time")
+                if created is None:
+                    continue
+                if isinstance(created, (int, float)):
+                    age = time.time() - float(created)
+                else:
+                    dt = date_parser.parse(str(created).replace("Z", "+00:00"))
+                    age = time.time() - dt.timestamp()
+                if age >= settings.sports.stale_order_max_age_sec and edge < settings.sports.stale_order_cancel_edge_cents:
+                    exec_engine.cancel_order(o.get("order_id"))
+                    audit.log("cancel", "stale order cancelled", {"order_id": o.get("order_id"), "market": ticker, "age": age, "edge": edge})
+        except Exception as exc:
+            audit.log("cancel", "stale order check failed", {"error": str(exc)})
 
         time.sleep(sleep_s)
         if not loop_forever:

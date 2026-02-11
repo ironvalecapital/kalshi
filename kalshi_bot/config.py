@@ -196,6 +196,8 @@ class SportsConfig(BaseModel):
     auto_pick_use_summary: bool = True
     auto_pick_top_n: int = 50
     daily_report_interval_sec: int = 3600
+    stale_order_max_age_sec: int = 300
+    stale_order_cancel_edge_cents: float = 0.1
 
 
 class BotSettings(BaseSettings):
