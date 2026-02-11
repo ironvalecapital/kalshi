@@ -239,6 +239,7 @@ def run_sports(
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
     cycles: int = typer.Option(1, help="Number of cycles"),
     sleep: int = typer.Option(10, help="Seconds between cycles"),
+    market: Optional[str] = typer.Option(None, help="Override market ticker"),
 ):
     if live:
         demo = False
@@ -251,7 +252,7 @@ def run_sports(
     audit = AuditLogger(ledger, settings.log_path)
     risk = RiskManager(settings.risk)
     exec_engine = ExecutionEngine(data_client, ledger, risk, settings.execution)
-    run_sports_strategy(settings, data_client, ledger, audit, risk, exec_engine, cycles, sleep, live)
+    run_sports_strategy(settings, data_client, ledger, audit, risk, exec_engine, cycles, sleep, live, market_override=market)
 
 
 @app.command()

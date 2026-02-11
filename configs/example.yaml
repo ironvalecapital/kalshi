@@ -101,3 +101,6 @@ sports:
   category_ev_multiplier: 1.25
   max_scan_markets: 200
   markets_cache_ttl_sec: 90
+  auto_pick_use_summary: true
+  auto_pick_top_n: 50
+  daily_report_interval_sec: 3600

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import threading
 import time
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -72,6 +74,22 @@ def _vwap_yes(trades: list[dict], window_sec: int = 300) -> Optional[float]:
     return (notional / volume) / 100.0
 
 
+def _auto_pick_from_summary(settings: BotSettings, data_client: KalshiDataClient) -> Optional[str]:
+    resp = data_client.list_markets(status="open", limit=1000)
+    markets = resp.get("markets", [])
+    markets = sorted(
+        markets,
+        key=lambda m: float(m.get("volume_24h", 0) or m.get("volume", 0) or 0),
+        reverse=True,
+    )[: settings.sports.auto_pick_top_n]
+    for m in markets:
+        if not settings.sports.auto_pick_use_summary:
+            continue
+        if m.get("yes_bid") is not None or m.get("no_bid") is not None:
+            return m.get("ticker")
+    return None
+
+
 def run_sports_strategy(
     settings: BotSettings,
     data_client: KalshiDataClient,
@@ -91,6 +109,8 @@ def run_sports_strategy(
 
     loop_forever = cycles <= 0
     open_order_id: Optional[str] = None
+    last_report_ts = time.time()
+    cycle_stats = {"decisions": 0, "orders": 0, "abstains": 0}
 
     while True:
         if exec_engine._kill_switch():
@@ -101,16 +121,20 @@ def run_sports_strategy(
         if market_override:
             pick = type("Pick", (), {"ticker": market_override, "event_ticker": ""})()
         else:
-            candidates = pick_sports_candidates(settings, data_client, top_n=settings.sports.top_n)
-            if not candidates:
-                audit.log("decision", "no sports candidates", {})
-                time.sleep(sleep_s)
-                if not loop_forever:
-                    cycles -= 1
-                    if cycles <= 0:
-                        break
-                continue
-            pick = candidates[0]
+            auto_ticker = _auto_pick_from_summary(settings, data_client)
+            if auto_ticker:
+                pick = type("Pick", (), {"ticker": auto_ticker, "event_ticker": ""})()
+            else:
+                candidates = pick_sports_candidates(settings, data_client, top_n=settings.sports.top_n)
+                if not candidates:
+                    audit.log("decision", "no sports candidates", {})
+                    time.sleep(sleep_s)
+                    if not loop_forever:
+                        cycles -= 1
+                        if cycles <= 0:
+                            break
+                    continue
+                pick = candidates[0]
         live_book = LiveOrderbook(settings, pick.ticker)
         flow = FlowFeatures()
         ob_state: Optional[OrderbookState] = None
@@ -317,6 +341,26 @@ def run_sports_strategy(
         write_decision_report(settings, report)
         ledger.record_decision(pick.ticker, "sports_orderflow", report, report.get("features", {}), ev_after, action, 1, {}, order_result)
         audit.log("decision", "sports orderflow", report)
+        cycle_stats["decisions"] += 1
+        if action == "ABSTAIN":
+            cycle_stats["abstains"] += 1
+        if order_result.get("status") == "submitted":
+            cycle_stats["orders"] += 1
+
+        now = time.time()
+        if now - last_report_ts >= settings.sports.daily_report_interval_sec:
+            report_path = Path(settings.decision_report_dir) / f"daily_report_{time.strftime('%Y%m%d_%H%M')}.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "market": pick.ticker,
+                "decisions": cycle_stats["decisions"],
+                "orders": cycle_stats["orders"],
+                "abstains": cycle_stats["abstains"],
+            }
+            report_path.write_text(json.dumps(payload, indent=2))
+            last_report_ts = now
+            cycle_stats = {"decisions": 0, "orders": 0, "abstains": 0}
 
         time.sleep(sleep_s)
         if not loop_forever:

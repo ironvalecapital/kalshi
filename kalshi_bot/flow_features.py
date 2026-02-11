@@ -18,6 +18,7 @@ class FlowFeatures:
     def __init__(self, max_trades: int = 200) -> None:
         self.trades: Deque[Trade] = deque(maxlen=max_trades)
         self.mid_history: Deque[Tuple[datetime, float]] = deque(maxlen=500)
+        self.book_history: Deque[Tuple[datetime, Optional[int], Optional[int], Optional[int]]] = deque(maxlen=500)
 
     def update_trade(self, price: int, size: int, side: Optional[str], ts: Optional[datetime] = None) -> None:
         if ts is None:
@@ -26,6 +27,9 @@ class FlowFeatures:
 
     def update_mid(self, mid: float) -> None:
         self.mid_history.append((datetime.now(timezone.utc), mid))
+
+    def update_book(self, yes_bid: Optional[int], yes_ask: Optional[int], spread: Optional[int]) -> None:
+        self.book_history.append((datetime.now(timezone.utc), yes_bid, yes_ask, spread))
 
     def imbalance(self, depth_yes: int, depth_no: int) -> float:
         return (depth_yes - depth_no) / (depth_yes + depth_no + 1e-6)
@@ -50,6 +54,27 @@ class FlowFeatures:
         if len(recent) < 2:
             return 0.0
         return recent[-1][1] - recent[0][1]
+
+    def bid_momentum(self, window_sec: int = 30) -> float:
+        now = datetime.now(timezone.utc)
+        recent = [b for b in self.book_history if (now - b[0]).total_seconds() <= window_sec and b[1] is not None]
+        if len(recent) < 2:
+            return 0.0
+        return float(recent[-1][1] - recent[0][1])
+
+    def ask_momentum(self, window_sec: int = 30) -> float:
+        now = datetime.now(timezone.utc)
+        recent = [b for b in self.book_history if (now - b[0]).total_seconds() <= window_sec and b[2] is not None]
+        if len(recent) < 2:
+            return 0.0
+        return float(recent[-1][2] - recent[0][2])
+
+    def spread_trend(self, window_sec: int = 30) -> float:
+        now = datetime.now(timezone.utc)
+        recent = [b for b in self.book_history if (now - b[0]).total_seconds() <= window_sec and b[3] is not None]
+        if len(recent) < 2:
+            return 0.0
+        return float(recent[-1][3] - recent[0][3])
 
     def realized_var(self, window_sec: int = 60) -> float:
         now = datetime.now(timezone.utc)

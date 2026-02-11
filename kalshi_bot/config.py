@@ -193,6 +193,9 @@ class SportsConfig(BaseModel):
     category_ev_multiplier: float = 1.25
     max_scan_markets: int = 200
     markets_cache_ttl_sec: int = 90
+    auto_pick_use_summary: bool = True
+    auto_pick_top_n: int = 50
+    daily_report_interval_sec: int = 3600
 
 
 class BotSettings(BaseSettings):
