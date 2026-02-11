@@ -113,3 +113,5 @@ sports:
   min_arb_depth: 10
   allow_arb_taker: false
   spread_scan_weight: 1.0
+  simple_active_maker: true
+  simple_min_spread_cents: 4

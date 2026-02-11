@@ -205,6 +205,8 @@ class SportsConfig(BaseModel):
     min_arb_depth: int = 10
     allow_arb_taker: bool = False
     spread_scan_weight: float = 1.0
+    simple_active_maker: bool = True
+    simple_min_spread_cents: int = 4
 
 
 class BotSettings(BaseSettings):

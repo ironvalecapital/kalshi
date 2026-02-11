@@ -266,8 +266,17 @@ def run_sports_strategy(
             key = str(pick.event_ticker).upper()
             if any(tag in key for tag in ["SPORT", "NFL", "NBA", "MLB", "NHL", "NCAAF", "NCAAB", "ENT", "MEDIA"]):
                 min_ev *= settings.sports.category_ev_multiplier
-        if ev_after >= min_ev and spread <= settings.sports.max_spread_cents and fill_prob > 0.1:
-            action = "BID_YES" if edge_cents >= 0 else "BID_NO"
+        if settings.sports.simple_active_maker:
+            if spread >= settings.sports.simple_min_spread_cents and spread <= settings.sports.max_spread_cents:
+                # Simple maker: fade the heavier side to capture spread.
+                action = "BID_NO" if depth_yes > depth_no else "BID_YES"
+                edge_cents = max(0.0, (spread / 2.0) - fee)
+                ev_after = edge_cents
+                if ev_after < min_ev:
+                    action = "ABSTAIN"
+        else:
+            if ev_after >= min_ev and spread <= settings.sports.max_spread_cents and fill_prob > 0.1:
+                action = "BID_YES" if edge_cents >= 0 else "BID_NO"
 
         # Near-resolved filter: avoid extreme tails.
         if yes_ask is not None and (yes_ask <= settings.sports.avoid_price_low_cents or yes_ask >= settings.sports.avoid_price_high_cents):
@@ -298,19 +307,22 @@ def run_sports_strategy(
                 if no_ask is not None and action == "BID_NO" and price >= no_ask:
                     price = no_bid or 0
             fee_per = fee_cents(1, price, maker=True)
-            if action == "BID_YES":
-                kfrac = kelly_fraction_yes(p_next, price, fee_per, 0.0)
+            if settings.sports.simple_active_maker:
+                size = max(1, min(settings.sports.max_order_size, max(1, depth // max(1, settings.sports.depth_size_divisor))))
             else:
-                kfrac = kelly_fraction_no(p_next, price, fee_per, 0.0)
-            size = kelly_contracts(
-                bankroll_usd=settings.execution.bankroll_usd,
-                price_cents=price,
-                kelly_fraction=kfrac,
-                fractional=settings.execution.kelly_fraction,
-                fill_prob=fill_prob,
-                use_fill_prob=settings.execution.kelly_use_fill_prob,
-                max_contracts=settings.sports.max_order_size,
-            )
+                if action == "BID_YES":
+                    kfrac = kelly_fraction_yes(p_next, price, fee_per, 0.0)
+                else:
+                    kfrac = kelly_fraction_no(p_next, price, fee_per, 0.0)
+                size = kelly_contracts(
+                    bankroll_usd=settings.execution.bankroll_usd,
+                    price_cents=price,
+                    kelly_fraction=kfrac,
+                    fractional=settings.execution.kelly_fraction,
+                    fill_prob=fill_prob,
+                    use_fill_prob=settings.execution.kelly_use_fill_prob,
+                    max_contracts=settings.sports.max_order_size,
+                )
             if depth > 0:
                 depth_cap = max(1, depth // max(1, settings.sports.depth_size_divisor))
                 size = min(size, depth_cap)
