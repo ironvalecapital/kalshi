@@ -132,16 +132,29 @@ def run_sports_strategy(
 
         if not ob_state:
             audit.log("decision", "no orderbook state", {"market": pick.ticker})
-            time.sleep(sleep_s)
-            continue
+            # Fall back to market summary quotes if WS/orderbook unavailable.
+            market_info = data_client.get_market(pick.ticker)
+            yes_bid = market_info.get("yes_bid")
+            yes_ask = market_info.get("yes_ask")
+            no_bid = market_info.get("no_bid")
+            no_ask = market_info.get("no_ask")
+            if yes_bid is None and yes_ask is None and no_bid is None and no_ask is None:
+                time.sleep(sleep_s)
+                continue
+            depth_yes = 0
+            depth_no = 0
+        else:
+            yes_bid = ob_state.best_yes_bid()
+            yes_ask = ob_state.best_yes_ask()
+            no_bid = ob_state.best_no_bid()
+            no_ask = ob_state.best_no_ask()
+            depth_yes = ob_state.depth_yes_topk(3)
+            depth_no = ob_state.depth_no_topk(3)
 
-        yes_bid = ob_state.best_yes_bid()
-        yes_ask = ob_state.best_yes_ask()
-        no_bid = ob_state.best_no_bid()
-        no_ask = ob_state.best_no_ask()
-        spread = ob_state.spread_yes() or 0
-        depth_yes = ob_state.depth_yes_topk(3)
-        depth_no = ob_state.depth_no_topk(3)
+        if ob_state:
+            spread = ob_state.spread_yes() or 0
+        else:
+            spread = (yes_ask - yes_bid) if yes_ask is not None and yes_bid is not None else 0
         depth = depth_yes + depth_no
 
         if yes_bid is None and no_bid is None:

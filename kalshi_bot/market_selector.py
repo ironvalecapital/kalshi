@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import time
 from typing import Any, Dict, List, Optional
 
 from .config import BotSettings
@@ -84,50 +85,81 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
     statuses = [s for s in (getattr(settings.sports, "statuses", None) or ["open"]) if s in allowed_statuses]
     if not statuses:
         statuses = ["open"]
-    for status in statuses:
-        resp = data_client.list_markets(status=status, limit=1000)
-        markets.extend(resp.get("markets", []))
+
+    # Cache markets list briefly to reduce API load.
+    cache_key = "sports_markets_cache"
+    now_ts = time.time()
+    cache = getattr(pick_sports_candidates, cache_key, None)
+    if cache and (now_ts - cache["ts"] <= settings.sports.markets_cache_ttl_sec):
+        markets = cache["markets"]
+    else:
+        for status in statuses:
+            resp = data_client.list_markets(status=status, limit=1000)
+            markets.extend(resp.get("markets", []))
+        setattr(pick_sports_candidates, cache_key, {"ts": now_ts, "markets": markets})
+
+    # Pre-filter by volume to reduce downstream calls.
+    markets = sorted(
+        markets,
+        key=lambda m: float(m.get("volume_24h", 0) or m.get("volume", 0) or 0),
+        reverse=True,
+    )
+    markets = markets[: settings.sports.max_scan_markets]
     now = datetime.now(timezone.utc)
     candidates: List[SportsCandidate] = []
-    for m in markets:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _summary_quotes(m: Dict[str, Any]) -> Dict[str, Optional[int]]:
+        return {
+            "best_yes_bid": m.get("yes_bid"),
+            "best_yes_ask": m.get("yes_ask"),
+            "best_no_bid": m.get("no_bid"),
+            "best_no_ask": m.get("no_ask"),
+            "spread_yes": (m.get("yes_ask") - m.get("yes_bid")) if m.get("yes_ask") is not None and m.get("yes_bid") is not None else None,
+            "depth_top3": 0,
+        }
+
+    def fetch_one(m: Dict[str, Any]) -> Optional[SportsCandidate]:
         if not _is_sports(settings, m) and not settings.sports.allow_unmatched_markets:
-            continue
+            return None
         ob = data_client.get_orderbook(m.get("ticker"))
         prices = _orderbook_complement(ob)
         if prices["spread_yes"] is None:
-            continue
-        # Trades tape from official Get Trades endpoint.
-        # https://docs.kalshi.com/api-reference/markets/get-trades
+            prices = _summary_quotes(m)
+        if prices["spread_yes"] is None:
+            return None
         trades_resp = data_client.get_trades(ticker=m.get("ticker"), limit=200)
         trades = trades_resp.get("trades", [])
         trades_60m = _count_trades(trades, now - timedelta(minutes=60))
         trades_5m = _count_trades(trades, now - timedelta(minutes=5))
-        # Loosen filters aggressively to surface candidates.
-        if prices["spread_yes"] > settings.sports.max_spread_cents:
-            pass
-        if trades_60m < settings.sports.min_trades_60m:
-            pass
-        if trades_5m < settings.sports.min_trades_5m:
-            pass
-        if prices["depth_top3"] < settings.sports.min_top_depth:
-            pass
         liquidity_score = 1.0 * trades_60m + 0.5 * trades_5m + 0.1 * prices["depth_top3"] - 0.7 * prices["spread_yes"]
-        candidates.append(
-            SportsCandidate(
-                ticker=m.get("ticker"),
-                title=m.get("title", ""),
-                event_ticker=m.get("event_ticker", "") or m.get("event_id", "") or "",
-                close_time=_close_time(m),
-                best_yes_bid=prices["best_yes_bid"],
-                best_yes_ask=prices["best_yes_ask"],
-                best_no_bid=prices["best_no_bid"],
-                best_no_ask=prices["best_no_ask"],
-                spread_yes=prices["spread_yes"],
-                trades_60m=trades_60m,
-                trades_5m=trades_5m,
-                depth_top3=prices["depth_top3"],
-                liquidity_score=liquidity_score,
-            )
+        return SportsCandidate(
+            ticker=m.get("ticker"),
+            title=m.get("title", ""),
+            event_ticker=m.get("event_ticker", "") or m.get("event_id", "") or "",
+            close_time=_close_time(m),
+            best_yes_bid=prices["best_yes_bid"],
+            best_yes_ask=prices["best_yes_ask"],
+            best_no_bid=prices["best_no_bid"],
+            best_no_ask=prices["best_no_ask"],
+            spread_yes=prices["spread_yes"],
+            trades_60m=trades_60m,
+            trades_5m=trades_5m,
+            depth_top3=prices["depth_top3"],
+            liquidity_score=liquidity_score,
         )
+
+    for m in markets:
+        if not _is_sports(settings, m) and not settings.sports.allow_unmatched_markets:
+            continue
+        pass
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(fetch_one, m) for m in markets]
+        for fut in as_completed(futures):
+            cand = fut.result()
+            if cand is None:
+                continue
+            candidates.append(cand)
     candidates.sort(key=lambda c: c.liquidity_score, reverse=True)
     return candidates[:top_n]
