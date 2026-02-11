@@ -43,3 +43,61 @@ def fill_probability(
 
 def spread_penalty_cents(spread_cents: float) -> float:
     return max(0.0, spread_cents * 0.1)
+
+
+def kelly_fraction_yes(
+    p_yes: float,
+    price_cents: int,
+    fee_cents_per_contract: float = 0.0,
+    slip_cents: float = 0.0,
+) -> float:
+    if price_cents <= 0 or price_cents >= 100:
+        return 0.0
+    p = max(0.0, min(1.0, p_yes))
+    ev_net = 100.0 * p - price_cents - fee_cents_per_contract - slip_cents
+    if ev_net <= 0:
+        return 0.0
+    denom = 100.0 - price_cents
+    return max(0.0, min(1.0, ev_net / denom))
+
+
+def kelly_fraction_no(
+    p_yes: float,
+    price_cents: int,
+    fee_cents_per_contract: float = 0.0,
+    slip_cents: float = 0.0,
+) -> float:
+    if price_cents <= 0 or price_cents >= 100:
+        return 0.0
+    p_no = 1.0 - max(0.0, min(1.0, p_yes))
+    ev_net = 100.0 * p_no - price_cents - fee_cents_per_contract - slip_cents
+    if ev_net <= 0:
+        return 0.0
+    denom = 100.0 - price_cents
+    return max(0.0, min(1.0, ev_net / denom))
+
+
+def kelly_contracts(
+    bankroll_usd: float,
+    price_cents: int,
+    kelly_fraction: float,
+    fractional: float,
+    fill_prob: float | None = None,
+    use_fill_prob: bool = False,
+    max_contracts: int | None = None,
+) -> int:
+    if bankroll_usd <= 0 or price_cents <= 0:
+        return 0
+    if kelly_fraction <= 0 or fractional <= 0:
+        return 0
+    scale = fractional
+    if use_fill_prob and fill_prob is not None:
+        scale *= max(0.0, min(1.0, fill_prob))
+    dollars = bankroll_usd * kelly_fraction * scale
+    cost_per = price_cents / 100.0
+    if cost_per <= 0:
+        return 0
+    contracts = int(dollars / cost_per)
+    if max_contracts is not None:
+        contracts = min(contracts, max_contracts)
+    return max(0, contracts)

@@ -35,6 +35,9 @@ class ExecutionConfig(BaseModel):
     maker_fee_rate: float = 0.0175
     taker_fee_rate: float = 0.07
     max_cancels_per_minute: int = 10
+    bankroll_usd: float = 5.0
+    kelly_fraction: float = 0.33
+    kelly_use_fill_prob: bool = True
 
 
 class DataConfig(BaseModel):

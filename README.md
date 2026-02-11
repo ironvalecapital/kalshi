@@ -52,6 +52,7 @@ kalshi-bot run --strategy bayes --market CPI-24APR --live --i-understand-risk
 - Kill switch: set `KALSHI_BOT_KILL=1` to stop trading immediately.
 - If rate limits (429) or auth errors (403) spike, the bot pauses and backs off.
 - Minimum order interval enforced to avoid spam or quote stuffing.
+- Position sizing can use fractional Kelly via `execution.bankroll_usd` and `execution.kelly_fraction`.
 
 ## Notes
 - `kalshi-python` is used where possible, but current Kalshi docs recommend `kalshi-python-sync` for newer endpoints. This project keeps compatibility with `kalshi-python` and relies on direct REST calls for endpoints not exposed in that SDK.

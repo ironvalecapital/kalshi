@@ -11,7 +11,16 @@ from ..config import BotSettings, merged_weather_locations
 from ..data_rest import KalshiDataClient
 from ..decision_models.chess_search import DecisionState, choose_action
 from ..decision_report import write_decision_report
-from ..ev import ev_buy_no_cents, ev_buy_yes_cents, estimate_fee_cents, fill_probability, spread_penalty_cents
+from ..ev import (
+    estimate_fee_cents,
+    ev_buy_no_cents,
+    ev_buy_yes_cents,
+    fill_probability,
+    kelly_contracts,
+    kelly_fraction_no,
+    kelly_fraction_yes,
+    spread_penalty_cents,
+)
 from ..execution import ExecutionEngine, OrderRequest
 from ..ledger import Ledger
 from ..market_picker import pick_weather_candidates
@@ -201,11 +210,28 @@ def run_weather_strategy(
                             price_cents = no_bid
                 if action in ("buy_yes", "buy_no"):
                     price_cents = max(1, price_cents)
-                size = min(settings.weather.max_order_size, max(1, int(max(ev_yes, ev_no) / settings.weather.ev_size_scale_cents)))
-                ok, reason = risk.check_order(cand.ticker, size, price_cents / 100.0)
-                if not ok:
+                fee_per = estimate_fee_cents(1, price_cents, True, settings.execution.maker_fee_rate, settings.execution.taker_fee_rate)
+                if action == "buy_yes":
+                    kfrac = kelly_fraction_yes(p_yes, price_cents, fee_per, 0.0)
+                else:
+                    kfrac = kelly_fraction_no(p_yes, price_cents, fee_per, 0.0)
+                size = kelly_contracts(
+                    bankroll_usd=settings.execution.bankroll_usd,
+                    price_cents=price_cents,
+                    kelly_fraction=kfrac,
+                    fractional=settings.execution.kelly_fraction,
+                    fill_prob=fill_prob,
+                    use_fill_prob=settings.execution.kelly_use_fill_prob,
+                    max_contracts=settings.weather.max_order_size,
+                )
+                if size <= 0:
                     action = "abstain"
-                    order_result = {"status": "rejected", "reason": reason}
+                    order_result = {"status": "rejected", "reason": "kelly_size_zero"}
+                else:
+                    ok, reason = risk.check_order(cand.ticker, size, price_cents / 100.0)
+                    if not ok:
+                        action = "abstain"
+                        order_result = {"status": "rejected", "reason": reason}
             if action == "buy_yes":
                 order = OrderRequest(
                     market_id=cand.ticker,

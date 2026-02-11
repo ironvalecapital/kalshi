@@ -39,7 +39,8 @@ weather:
   keywords: ["WEATHER", "TEMP", "TEMPERATURE", "HIGH TEMPERATURE", "PRECIP", "SNOW", "RAIN"]
   market_overrides: {}
   min_trades_24h: 0
-  top_n: 200
+  top_n: 300
+  allow_unmatched_markets: true
   bid_improve_cents: 1
   max_depth_levels: 3
   allow_cross_spread: false
@@ -72,19 +73,23 @@ execution:
   maker_fee_rate: 0.0175
   taker_fee_rate: 0.07
   max_cancels_per_minute: 10
+  bankroll_usd: 5.0
+  kelly_fraction: 0.33
+  kelly_use_fill_prob: true
 
 sports:
-  keywords: ["SPORT", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF"]
+  keywords: ["SPORT", "SPORTS", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "GAME", "MATCH", "TEAM"]
   allowlist: []
-  max_spread_cents: 6.0
-  min_trades_60m: 30
-  min_trades_5m: 5
-  min_top_depth: 100
+  max_spread_cents: 30.0
+  min_trades_60m: 0
+  min_trades_5m: 0
+  min_top_depth: 0
   min_ev_cents: 2.0
   extreme_edge_cents: 6.0
   urgency_window_sec: 300
   min_order_interval_sec: 5
   max_cancels_per_min: 10
-  top_n: 20
+  top_n: 50
   base_size: 1
   max_order_size: 10
+  allow_unmatched_markets: true

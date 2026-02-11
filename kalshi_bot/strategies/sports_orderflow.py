@@ -11,6 +11,7 @@ from ..config import BotSettings
 from ..data_rest import KalshiDataClient
 from ..decision_report import write_decision_report
 from ..execution import ExecutionEngine, OrderRequest
+from ..ev import kelly_contracts, kelly_fraction_no, kelly_fraction_yes
 from ..fee_model import fee_cents
 from ..flow_features import FlowFeatures
 from ..ledger import Ledger
@@ -136,20 +137,36 @@ def run_sports_strategy(
                 price = yes_bid or 0
             if no_ask is not None and action == "BID_NO" and price >= no_ask:
                 price = no_bid or 0
-            size = min(settings.sports.max_order_size, max(settings.sports.base_size, int(ev_after / settings.sports.min_ev_cents)))
-            ok, reason = risk.check_order(pick.ticker, size, price / 100.0)
-            if ok:
-                order = OrderRequest(
-                    market_id=pick.ticker,
-                    side="yes" if action == "BID_YES" else "no",
-                    action="buy",
-                    price_cents=price,
-                    count=size,
-                    client_order_id=f"sports-{int(time.time())}",
-                )
-                order_result = exec_engine.place_order(order)
+            fee_per = fee_cents(1, price, maker=True)
+            if action == "BID_YES":
+                kfrac = kelly_fraction_yes(p_next, price, fee_per, 0.0)
             else:
-                order_result = {"status": "rejected", "reason": reason}
+                kfrac = kelly_fraction_no(p_next, price, fee_per, 0.0)
+            size = kelly_contracts(
+                bankroll_usd=settings.execution.bankroll_usd,
+                price_cents=price,
+                kelly_fraction=kfrac,
+                fractional=settings.execution.kelly_fraction,
+                fill_prob=fill_prob,
+                use_fill_prob=settings.execution.kelly_use_fill_prob,
+                max_contracts=settings.sports.max_order_size,
+            )
+            if size <= 0:
+                order_result = {"status": "rejected", "reason": "kelly_size_zero"}
+            else:
+                ok, reason = risk.check_order(pick.ticker, size, price / 100.0)
+                if ok:
+                    order = OrderRequest(
+                        market_id=pick.ticker,
+                        side="yes" if action == "BID_YES" else "no",
+                        action="buy",
+                        price_cents=price,
+                        count=size,
+                        client_order_id=f"sports-{int(time.time())}",
+                    )
+                    order_result = exec_engine.place_order(order)
+                else:
+                    order_result = {"status": "rejected", "reason": reason}
 
         report = {
             "market_ticker": pick.ticker,
