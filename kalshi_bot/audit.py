@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from .ledger import Ledger
+from .alerts import send_telegram
 
 
 class AuditLogger:
@@ -22,5 +23,7 @@ class AuditLogger:
             "context": context,
         }
         self.ledger.record_audit(event_type, message, context)
+        if event_type in {"order", "cancel", "kill", "error"}:
+            send_telegram(f"[{event_type}] {message}", context)
         with self.log_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
