@@ -29,6 +29,49 @@ def _fill_prob(depth: int, spread: int, trade_rate: float) -> float:
     return _sigmoid(x)
 
 
+def _implied_mid_yes(yes_bid: Optional[int], yes_ask: Optional[int]) -> Optional[float]:
+    if yes_bid is None or yes_ask is None:
+        return None
+    return (yes_bid + yes_ask) / 2.0 / 100.0
+
+
+def _microprice_yes(yes_bid: Optional[int], yes_ask: Optional[int], depth_yes: int, depth_no: int) -> Optional[float]:
+    if yes_bid is None or yes_ask is None:
+        return None
+    denom = depth_yes + depth_no
+    if denom <= 0:
+        return None
+    micro = (yes_bid * depth_yes + yes_ask * depth_no) / denom
+    return micro / 100.0
+
+
+def _vwap_yes(trades: list[dict], window_sec: int = 300) -> Optional[float]:
+    if not trades:
+        return None
+    now = datetime.now(timezone.utc)
+    notional = 0.0
+    volume = 0.0
+    for tr in trades:
+        ts = tr.get("ts") or tr.get("timestamp") or tr.get("time") or tr.get("created_time")
+        if ts is None:
+            continue
+        if isinstance(ts, (int, float)):
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        else:
+            dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone(timezone.utc)
+        if (now - dt).total_seconds() > window_sec:
+            continue
+        price = tr.get("yes_price") or tr.get("price")
+        count = tr.get("count") or 0
+        if price is None or count <= 0:
+            continue
+        notional += float(price) * float(count)
+        volume += float(count)
+    if volume <= 0:
+        return None
+    return (notional / volume) / 100.0
+
+
 def run_sports_strategy(
     settings: BotSettings,
     data_client: KalshiDataClient,
@@ -39,6 +82,7 @@ def run_sports_strategy(
     cycles: int,
     sleep_s: int,
     live: bool,
+    market_override: Optional[str] = None,
 ) -> None:
     if live:
         audit.log("mode", "LIVE MODE", {})
@@ -53,17 +97,20 @@ def run_sports_strategy(
             audit.log("kill", "kill switch enabled", {})
             break
 
-        candidates = pick_sports_candidates(settings, data_client, top_n=settings.sports.top_n)
-        if not candidates:
-            audit.log("decision", "no sports candidates", {})
-            time.sleep(sleep_s)
-            if not loop_forever:
-                cycles -= 1
-                if cycles <= 0:
-                    break
-            continue
-
-        pick = candidates[0]
+        pick = None
+        if market_override:
+            pick = type("Pick", (), {"ticker": market_override})()
+        else:
+            candidates = pick_sports_candidates(settings, data_client, top_n=settings.sports.top_n)
+            if not candidates:
+                audit.log("decision", "no sports candidates", {})
+                time.sleep(sleep_s)
+                if not loop_forever:
+                    cycles -= 1
+                    if cycles <= 0:
+                        break
+                continue
+            pick = candidates[0]
         live_book = LiveOrderbook(settings, pick.ticker)
         flow = FlowFeatures()
         ob_state: Optional[OrderbookState] = None
@@ -127,23 +174,45 @@ def run_sports_strategy(
         a0, a1, a2, a3, a4, a5 = 0.0, 1.2, 0.01, 0.05, 0.3, 0.02
         p_next = _sigmoid(a0 + a1 * imbalance + a2 * signed_vol + a3 * delta_mid - a4 * spread - a5 * vol)
 
-        implied_yes = (yes_ask / 100.0) if yes_ask is not None else 0.5
-        edge_cents = (p_next - implied_yes) * 100.0
+        implied_mid = _implied_mid_yes(yes_bid, yes_ask)
+        micro = _microprice_yes(yes_bid, yes_ask, depth_yes, depth_no)
+        vwap = _vwap_yes(trades, window_sec=300)
+
+        # Base implied probability from mid, then adjust by orderflow signals.
+        implied_yes = implied_mid if implied_mid is not None else (yes_ask / 100.0 if yes_ask is not None else 0.5)
+        drift = 0.0
+        if micro is not None and implied_mid is not None:
+            drift += (micro - implied_mid)
+        if vwap is not None and implied_mid is not None:
+            drift += (vwap - implied_mid)
+        # Convert feature mix into a small probability delta.
+        delta_p = 0.05 * imbalance + 0.002 * delta_mid + 0.01 * (drift * 100.0)
+        p_next = max(0.01, min(0.99, implied_yes + delta_p))
+
+        edge_cents = (p_next - (yes_ask / 100.0 if yes_ask is not None else implied_yes)) * 100.0
         fee = fee_cents(1, yes_ask or 0, maker=True)
         ev_after = edge_cents - fee
 
         fill_prob = _fill_prob(depth, spread, trades_5m / 5.0)
         action = "ABSTAIN"
-        if ev_after >= settings.sports.min_ev_cents and spread <= settings.sports.max_spread_cents and fill_prob > 0.2:
+        min_ev = settings.sports.min_ev_cents
+        if ev_after >= min_ev and spread <= settings.sports.max_spread_cents and fill_prob > 0.1:
             action = "BID_YES" if edge_cents >= 0 else "BID_NO"
+
+        # Longshot bias filters: avoid buying YES at extreme low prices; prefer NO at tails.
+        if action == "BID_YES" and yes_ask is not None and yes_ask <= settings.sports.yes_longshot_max_cents:
+            action = "ABSTAIN"
+        if action == "BID_NO" and yes_ask is not None and yes_ask < settings.sports.no_tail_min_cents:
+            action = "ABSTAIN"
 
         order_result: Dict[str, Any] = {}
         if action in ("BID_YES", "BID_NO"):
             price = (yes_bid or 0) + 1 if action == "BID_YES" else (no_bid or 0) + 1
-            if yes_ask is not None and price >= yes_ask:
-                price = yes_bid or 0
-            if no_ask is not None and action == "BID_NO" and price >= no_ask:
-                price = no_bid or 0
+            if settings.sports.maker_only:
+                if yes_ask is not None and price >= yes_ask:
+                    price = yes_bid or 0
+                if no_ask is not None and action == "BID_NO" and price >= no_ask:
+                    price = no_bid or 0
             fee_per = fee_cents(1, price, maker=True)
             if action == "BID_YES":
                 kfrac = kelly_fraction_yes(p_next, price, fee_per, 0.0)
@@ -184,12 +253,16 @@ def run_sports_strategy(
             "best_no_ask": no_ask,
             "spread": spread,
             "depth_top3": depth,
+            "depth_yes_top3": depth_yes,
+            "depth_no_top3": depth_no,
             "trade_rate_5m": trades_5m,
             "trade_rate_60m": trades_60m,
             "features": {
                 "imbalance": imbalance,
                 "signed_vol": signed_vol,
                 "delta_mid_30s": delta_mid,
+                "microprice": micro,
+                "vwap_5m": vwap,
                 "realized_var_1m": vol,
             },
             "model": {

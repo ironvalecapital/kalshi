@@ -187,6 +187,10 @@ class SportsConfig(BaseModel):
     max_order_size: int = 10
     allow_unmatched_markets: bool = True
     statuses: list = ["open", "initialized"]
+    yes_longshot_max_cents: int = 10
+    no_tail_min_cents: int = 90
+    maker_only: bool = True
+    category_ev_multiplier: float = 1.25
 
 
 class BotSettings(BaseSettings):
