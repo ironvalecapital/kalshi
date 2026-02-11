@@ -107,7 +107,11 @@ class LiveOrderbook:
                 data = json.loads(raw)
                 if data.get("type") == "orderbook_snapshot":
                     self.apply_snapshot(data)
-                    await on_update(self.state)
+                    result = on_update(self.state)
+                    if asyncio.iscoroutine(result):
+                        await result
                 if data.get("type") == "orderbook_delta":
                     self.apply_delta(data)
-                    await on_update(self.state)
+                    result = on_update(self.state)
+                    if asyncio.iscoroutine(result):
+                        await result
