@@ -196,6 +196,11 @@ def run_sports_strategy(
         fill_prob = _fill_prob(depth, spread, trades_5m / 5.0)
         action = "ABSTAIN"
         min_ev = settings.sports.min_ev_cents
+        # Category gating: higher EV threshold for sports/entertainment/media-like categories.
+        if pick.event_ticker:
+            key = str(pick.event_ticker).upper()
+            if any(tag in key for tag in ["SPORT", "NFL", "NBA", "MLB", "NHL", "NCAAF", "NCAAB", "ENT", "MEDIA"]):
+                min_ev *= settings.sports.category_ev_multiplier
         if ev_after >= min_ev and spread <= settings.sports.max_spread_cents and fill_prob > 0.1:
             action = "BID_YES" if edge_cents >= 0 else "BID_NO"
 

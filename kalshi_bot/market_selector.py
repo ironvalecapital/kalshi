@@ -12,6 +12,7 @@ from .data_rest import KalshiDataClient
 class SportsCandidate:
     ticker: str
     title: str
+    event_ticker: str
     close_time: Optional[datetime]
     best_yes_bid: Optional[int]
     best_yes_ask: Optional[int]
@@ -115,6 +116,7 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
             SportsCandidate(
                 ticker=m.get("ticker"),
                 title=m.get("title", ""),
+                event_ticker=m.get("event_ticker", "") or m.get("event_id", "") or "",
                 close_time=_close_time(m),
                 best_yes_bid=prices["best_yes_bid"],
                 best_yes_ask=prices["best_yes_ask"],
