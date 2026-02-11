@@ -78,8 +78,14 @@ def _count_trades(trades: List[Dict[str, Any]], since: datetime) -> int:
 
 
 def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient, top_n: int) -> List[SportsCandidate]:
-    resp = data_client.list_markets(status="open", limit=1000)
-    markets = resp.get("markets", [])
+    markets: List[Dict[str, Any]] = []
+    allowed_statuses = {"open", "closed", "settled"}
+    statuses = [s for s in (settings.sports.statuses or ["open"]) if s in allowed_statuses]
+    if not statuses:
+        statuses = ["open"]
+    for status in statuses:
+        resp = data_client.list_markets(status=status, limit=1000)
+        markets.extend(resp.get("markets", []))
     now = datetime.now(timezone.utc)
     candidates: List[SportsCandidate] = []
     for m in markets:

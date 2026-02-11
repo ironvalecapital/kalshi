@@ -82,20 +82,27 @@ def pick_weather_candidates(settings: BotSettings, data_client: KalshiDataClient
     now = datetime.now(timezone.utc)
     min_close = now + timedelta(hours=settings.weather.min_time_to_close_hours)
     max_close = now + timedelta(hours=settings.weather.max_time_to_close_hours)
-    cursor = None
     markets: List[Dict[str, Any]] = []
-    while True:
-        resp = data_client.list_markets(
-            status="open",
-            limit=1000,
-            min_close_ts=int(min_close.timestamp()),
-            max_close_ts=int(max_close.timestamp()),
-            cursor=cursor,
-        )
-        markets.extend(resp.get("markets", []))
-        cursor = resp.get("cursor")
-        if not cursor:
-            break
+    allowed_statuses = {"open", "closed", "settled"}
+    statuses = [s for s in (settings.weather.statuses or ["open"]) if s in allowed_statuses]
+    if not statuses:
+        statuses = ["open"]
+    for status in statuses:
+        cursor = None
+        while True:
+            params = {
+                "status": status,
+                "limit": 1000,
+                "cursor": cursor,
+            }
+            if settings.weather.use_close_window:
+                params["min_close_ts"] = int(min_close.timestamp())
+                params["max_close_ts"] = int(max_close.timestamp())
+            resp = data_client.list_markets(**params)
+            markets.extend(resp.get("markets", []))
+            cursor = resp.get("cursor")
+            if not cursor:
+                break
     candidates: List[MarketCandidate] = []
     for m in markets:
         if not is_weather_market(settings, m) and not settings.weather.allow_unmatched_markets:
