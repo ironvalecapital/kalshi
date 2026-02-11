@@ -13,10 +13,11 @@ rate_limit:
   tier: basic
 
 weather:
+  statuses: ["open"]
   forecast_sigma_f: 2.0
-  min_fill_prob: 0.05
-  max_spread_cents: 30.0
-  min_edge_after_fees_cents: 0.25
+  min_fill_prob: 0.02
+  max_spread_cents: 50.0
+  min_edge_after_fees_cents: 0.1
   min_time_to_close_hours: 0.5
   max_time_to_close_hours: 168.0
   w_trades: 1.0
@@ -44,15 +45,15 @@ weather:
   bid_improve_cents: 1
   max_depth_levels: 3
   allow_cross_spread: false
-  min_rr: 1.05
+  min_rr: 1.01
   max_order_size: 10
   ev_size_scale_cents: 3.0
   depth_fill_weight: 0.005
   trades_fill_weight: 0.02
   regime_t1_hours: 24.0
   regime_t2_hours: 1.0
-  near_close_min_rr: 1.1
-  near_close_min_ev_cents: 0.5
+  near_close_min_rr: 1.01
+  near_close_min_ev_cents: 0.1
 
 risk:
   max_daily_loss_usd: 100.0
@@ -78,13 +79,14 @@ execution:
   kelly_use_fill_prob: true
 
 sports:
+  statuses: ["open"]
   keywords: ["SPORT", "SPORTS", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "GAME", "MATCH", "TEAM"]
   allowlist: []
-  max_spread_cents: 30.0
+  max_spread_cents: 50.0
   min_trades_60m: 0
   min_trades_5m: 0
   min_top_depth: 0
-  min_ev_cents: 2.0
+  min_ev_cents: 0.75
   extreme_edge_cents: 6.0
   urgency_window_sec: 300
   min_order_interval_sec: 5

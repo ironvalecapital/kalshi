@@ -50,11 +50,13 @@ class DataConfig(BaseModel):
 
 class WeatherConfig(BaseModel):
     forecast_sigma_f: float = 2.0
-    min_fill_prob: float = 0.05
-    max_spread_cents: float = 30.0
-    min_edge_after_fees_cents: float = 0.25
+    min_fill_prob: float = 0.02
+    max_spread_cents: float = 50.0
+    min_edge_after_fees_cents: float = 0.1
     min_time_to_close_hours: float = 0.5
     max_time_to_close_hours: float = 168.0
+    use_close_window: bool = False
+    statuses: list = ["open", "initialized"]
     w_trades: float = 1.0
     w_volume: float = 0.1
     w_spread: float = 0.05
@@ -64,15 +66,15 @@ class WeatherConfig(BaseModel):
     bid_improve_cents: int = 1
     max_depth_levels: int = 3
     allow_cross_spread: bool = False
-    min_rr: float = 1.05
+    min_rr: float = 1.01
     max_order_size: int = 10
     ev_size_scale_cents: float = 3.0
     depth_fill_weight: float = 0.005
     trades_fill_weight: float = 0.02
     regime_t1_hours: float = 24.0
     regime_t2_hours: float = 1.0
-    near_close_min_rr: float = 1.1
-    near_close_min_ev_cents: float = 0.5
+    near_close_min_rr: float = 1.01
+    near_close_min_ev_cents: float = 0.1
     keywords: list = [
         "WEATHER",
         "TEMP",
@@ -97,6 +99,62 @@ class WeatherConfig(BaseModel):
         "SEA": {"lat": 47.6062, "lon": -122.3321},
         "SFO": {"lat": 37.7749, "lon": -122.4194},
         "DAL": {"lat": 32.7767, "lon": -96.7970},
+        "ALBANY": {"lat": 42.6526, "lon": -73.7562},
+        "ANNAPOLIS": {"lat": 38.9784, "lon": -76.4922},
+        "ATLANTA": {"lat": 33.7490, "lon": -84.3880},
+        "AUSTIN": {"lat": 30.2672, "lon": -97.7431},
+        "BATON ROUGE": {"lat": 30.4515, "lon": -91.1871},
+        "BISMARCK": {"lat": 46.8083, "lon": -100.7837},
+        "BOISE": {"lat": 43.6150, "lon": -116.2023},
+        "BOSTON": {"lat": 42.3601, "lon": -71.0589},
+        "CARSON CITY": {"lat": 39.1638, "lon": -119.7674},
+        "CHARLESTON": {"lat": 38.3498, "lon": -81.6326},
+        "CHEYENNE": {"lat": 41.1400, "lon": -104.8202},
+        "COLUMBIA": {"lat": 34.0007, "lon": -81.0348},
+        "COLUMBUS": {"lat": 39.9612, "lon": -82.9988},
+        "CONCORD": {"lat": 43.2081, "lon": -71.5376},
+        "DENVER": {"lat": 39.7392, "lon": -104.9903},
+        "DES MOINES": {"lat": 41.5868, "lon": -93.6250},
+        "DOVER": {"lat": 39.1582, "lon": -75.5244},
+        "FRANKFORT": {"lat": 38.2009, "lon": -84.8733},
+        "HARRISBURG": {"lat": 40.2732, "lon": -76.8867},
+        "HARTFORD": {"lat": 41.7658, "lon": -72.6734},
+        "HELENA": {"lat": 46.5891, "lon": -112.0391},
+        "HONOLULU": {"lat": 21.3069, "lon": -157.8583},
+        "INDIANAPOLIS": {"lat": 39.7684, "lon": -86.1581},
+        "JACKSON": {"lat": 32.2988, "lon": -90.1848},
+        "JEFFERSON CITY": {"lat": 38.5767, "lon": -92.1735},
+        "JUNEAU": {"lat": 58.3019, "lon": -134.4197},
+        "LANSING": {"lat": 42.7325, "lon": -84.5555},
+        "LINCOLN": {"lat": 40.8136, "lon": -96.7026},
+        "LITTLE ROCK": {"lat": 34.7465, "lon": -92.2896},
+        "MADISON": {"lat": 43.0731, "lon": -89.4012},
+        "MONTGOMERY": {"lat": 32.3792, "lon": -86.3077},
+        "MONTPELIER": {"lat": 44.2601, "lon": -72.5754},
+        "NASHVILLE": {"lat": 36.1627, "lon": -86.7816},
+        "OKLAHOMA CITY": {"lat": 35.4676, "lon": -97.5164},
+        "OLYMPIA": {"lat": 47.0379, "lon": -122.9007},
+        "PHOENIX": {"lat": 33.4484, "lon": -112.0740},
+        "PIERRE": {"lat": 44.3683, "lon": -100.3509},
+        "PROVIDENCE": {"lat": 41.8240, "lon": -71.4128},
+        "RALEIGH": {"lat": 35.7796, "lon": -78.6382},
+        "RICHMOND": {"lat": 37.5407, "lon": -77.4360},
+        "SACRAMENTO": {"lat": 38.5816, "lon": -121.4944},
+        "SAINT PAUL": {"lat": 44.9537, "lon": -93.0900},
+        "ST PAUL": {"lat": 44.9537, "lon": -93.0900},
+        "SALEM": {"lat": 44.9429, "lon": -123.0351},
+        "SANTA FE": {"lat": 35.6870, "lon": -105.9378},
+        "SPRINGFIELD": {"lat": 39.7817, "lon": -89.6501},
+        "TALLAHASSEE": {"lat": 30.4383, "lon": -84.2807},
+        "TOPEKA": {"lat": 39.0473, "lon": -95.6752},
+        "TRENTON": {"lat": 40.2204, "lon": -74.7643},
+        "HARTFORD CT": {"lat": 41.7658, "lon": -72.6734},
+        "AUGUSTA": {"lat": 44.3106, "lon": -69.7795},
+        "AUGUSTA ME": {"lat": 44.3106, "lon": -69.7795},
+        "AUGUSTA GA": {"lat": 33.4735, "lon": -82.0105},
+        "SAINT LOUIS": {"lat": 38.6270, "lon": -90.1994},
+        "NEW ORLEANS": {"lat": 29.9511, "lon": -90.0715},
+        "NEW YORK": {"lat": 40.7128, "lon": -74.0060},
     }
 
 
@@ -115,11 +173,11 @@ class SportsConfig(BaseModel):
         "TEAM",
     ]
     allowlist: list = []
-    max_spread_cents: float = 30.0
+    max_spread_cents: float = 50.0
     min_trades_60m: int = 0
     min_trades_5m: int = 0
     min_top_depth: int = 0
-    min_ev_cents: float = 2.0
+    min_ev_cents: float = 0.75
     extreme_edge_cents: float = 6.0
     urgency_window_sec: int = 300
     min_order_interval_sec: int = 5
@@ -128,6 +186,7 @@ class SportsConfig(BaseModel):
     base_size: int = 1
     max_order_size: int = 10
     allow_unmatched_markets: bool = True
+    statuses: list = ["open", "initialized"]
 
 
 class BotSettings(BaseSettings):
