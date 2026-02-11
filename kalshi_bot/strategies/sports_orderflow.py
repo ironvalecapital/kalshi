@@ -93,7 +93,9 @@ def run_sports_strategy(
         no_bid = ob_state.best_no_bid()
         no_ask = ob_state.best_no_ask()
         spread = ob_state.spread_yes() or 0
-        depth = ob_state.depth_topk(3)
+        depth_yes = ob_state.depth_yes_topk(3)
+        depth_no = ob_state.depth_no_topk(3)
+        depth = depth_yes + depth_no
 
         flow.update_mid((yes_bid + yes_ask) / 2 if yes_bid is not None and yes_ask is not None else 0)
         trades_resp = data_client.get_trades(ticker=pick.ticker, limit=50)
@@ -107,12 +109,17 @@ def run_sports_strategy(
                 dt = datetime.fromtimestamp(ts, tz=timezone.utc)
             else:
                 dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone(timezone.utc)
+            side = tr.get("taker_side") or tr.get("side")
+            price = tr.get("yes_price") or tr.get("price") or 0
+            count = tr.get("count") or 0
+            if price and count:
+                flow.update_trade(price=price, size=count, side=side, ts=dt)
             if (now - dt).total_seconds() <= 300:
                 trades_5m += 1
             if (now - dt).total_seconds() <= 3600:
                 trades_60m += 1
 
-        imbalance = flow.imbalance(depth_yes=depth // 2, depth_no=depth // 2)
+        imbalance = flow.imbalance(depth_yes=depth_yes, depth_no=depth_no)
         signed_vol = flow.signed_volume(60)
         delta_mid = flow.momentum(30)
         vol = flow.realized_var(60)

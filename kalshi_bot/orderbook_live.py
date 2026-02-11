@@ -44,6 +44,14 @@ class OrderbookState:
         no_levels = sorted(self.no_bids.items(), key=lambda x: x[0], reverse=True)[:k]
         return sum(size for _, size in yes_levels) + sum(size for _, size in no_levels)
 
+    def depth_yes_topk(self, k: int = 3) -> int:
+        yes_levels = sorted(self.yes_bids.items(), key=lambda x: x[0], reverse=True)[:k]
+        return sum(size for _, size in yes_levels)
+
+    def depth_no_topk(self, k: int = 3) -> int:
+        no_levels = sorted(self.no_bids.items(), key=lambda x: x[0], reverse=True)[:k]
+        return sum(size for _, size in no_levels)
+
 
 class LiveOrderbook:
     def __init__(self, settings: BotSettings, ticker: str) -> None:

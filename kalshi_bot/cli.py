@@ -189,13 +189,15 @@ def watch_flow(
             if best_yes is not None and best_yes_ask is not None:
                 mid = (best_yes + best_yes_ask) / 2
                 flow.update_mid(mid)
+            depth_yes = state.depth_yes_topk(3)
+            depth_no = state.depth_no_topk(3)
             console.print(
                 {
                     "market": market,
                     "best_yes": best_yes,
                     "best_yes_ask": best_yes_ask,
                     "spread": state.spread_yes(),
-                    "imbalance": flow.imbalance(state.depth_topk(3) // 2, state.depth_topk(3) // 2),
+                    "imbalance": flow.imbalance(depth_yes, depth_no),
                     "momentum_30s": flow.momentum(30),
                 }
             )
