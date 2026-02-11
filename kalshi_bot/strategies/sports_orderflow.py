@@ -99,7 +99,7 @@ def run_sports_strategy(
 
         pick = None
         if market_override:
-            pick = type("Pick", (), {"ticker": market_override})()
+            pick = type("Pick", (), {"ticker": market_override, "event_ticker": ""})()
         else:
             candidates = pick_sports_candidates(settings, data_client, top_n=settings.sports.top_n)
             if not candidates:
@@ -144,14 +144,27 @@ def run_sports_strategy(
         depth_no = ob_state.depth_no_topk(3)
         depth = depth_yes + depth_no
 
-        flow.update_mid((yes_bid + yes_ask) / 2 if yes_bid is not None and yes_ask is not None else 0)
+        if yes_bid is None and no_bid is None:
+            audit.log("decision", "empty orderbook", {"market": pick.ticker})
+            time.sleep(sleep_s)
+            if not loop_forever:
+                cycles -= 1
+                if cycles <= 0:
+                    break
+            continue
+
+        if yes_bid is not None and yes_ask is not None:
+            flow.update_mid((yes_bid + yes_ask) / 2)
+        flow.update_book(yes_bid, yes_ask, spread)
         trades_resp = data_client.get_trades(ticker=pick.ticker, limit=50)
         trades = trades_resp.get("trades", [])
         now = datetime.now(timezone.utc)
         trades_5m = 0
         trades_60m = 0
         for tr in trades:
-            ts = tr.get("ts") or tr.get("timestamp") or tr.get("time")
+            ts = tr.get("ts") or tr.get("timestamp") or tr.get("time") or tr.get("created_time")
+            if ts is None:
+                continue
             if isinstance(ts, (int, float)):
                 dt = datetime.fromtimestamp(ts, tz=timezone.utc)
             else:
@@ -169,6 +182,9 @@ def run_sports_strategy(
         imbalance = flow.imbalance(depth_yes=depth_yes, depth_no=depth_no)
         signed_vol = flow.signed_volume(60)
         delta_mid = flow.momentum(30)
+        bid_mom = flow.bid_momentum(30)
+        ask_mom = flow.ask_momentum(30)
+        spread_trend = flow.spread_trend(30)
         vol = flow.realized_var(60)
 
         a0, a1, a2, a3, a4, a5 = 0.0, 1.2, 0.01, 0.05, 0.3, 0.02
@@ -186,7 +202,8 @@ def run_sports_strategy(
         if vwap is not None and implied_mid is not None:
             drift += (vwap - implied_mid)
         # Convert feature mix into a small probability delta.
-        delta_p = 0.05 * imbalance + 0.002 * delta_mid + 0.01 * (drift * 100.0)
+        delta_p = 0.05 * imbalance + 0.002 * delta_mid + 0.004 * bid_mom - 0.004 * ask_mom - 0.003 * spread_trend
+        delta_p += 0.01 * (drift * 100.0)
         p_next = max(0.01, min(0.99, implied_yes + delta_p))
 
         edge_cents = (p_next - (yes_ask / 100.0 if yes_ask is not None else implied_yes)) * 100.0
@@ -266,6 +283,9 @@ def run_sports_strategy(
                 "imbalance": imbalance,
                 "signed_vol": signed_vol,
                 "delta_mid_30s": delta_mid,
+                "bid_momentum_30s": bid_mom,
+                "ask_momentum_30s": ask_mom,
+                "spread_trend_30s": spread_trend,
                 "microprice": micro,
                 "vwap_5m": vwap,
                 "realized_var_1m": vol,
