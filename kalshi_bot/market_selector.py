@@ -101,14 +101,15 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
         trades = trades_resp.get("trades", [])
         trades_60m = _count_trades(trades, now - timedelta(minutes=60))
         trades_5m = _count_trades(trades, now - timedelta(minutes=5))
+        # Loosen filters aggressively to surface candidates.
         if prices["spread_yes"] > settings.sports.max_spread_cents:
-            continue
+            pass
         if trades_60m < settings.sports.min_trades_60m:
-            continue
+            pass
         if trades_5m < settings.sports.min_trades_5m:
-            continue
+            pass
         if prices["depth_top3"] < settings.sports.min_top_depth:
-            continue
+            pass
         liquidity_score = 1.0 * trades_60m + 0.5 * trades_5m + 0.1 * prices["depth_top3"] - 0.7 * prices["spread_yes"]
         candidates.append(
             SportsCandidate(
