@@ -41,7 +41,7 @@ class KalshiRestClient:
         self._private_key = None
         if settings.api_key_id and settings.private_key_path:
             self._private_key = load_private_key(settings.private_key_path)
-        self._client = httpx.Client(timeout=15.0)
+        self._client = httpx.Client(timeout=45.0)
 
     def _auth_headers(self, method: str, path: str) -> Dict[str, str]:
         if not self.settings.api_key_id or not self._private_key:
