@@ -198,6 +198,13 @@ class SportsConfig(BaseModel):
     daily_report_interval_sec: int = 3600
     stale_order_max_age_sec: int = 300
     stale_order_cancel_edge_cents: float = 0.1
+    min_spread_cents: int = 4
+    avoid_price_low_cents: int = 2
+    avoid_price_high_cents: int = 98
+    depth_size_divisor: int = 5
+    min_arb_depth: int = 10
+    allow_arb_taker: bool = False
+    spread_scan_weight: float = 1.0
 
 
 class BotSettings(BaseSettings):

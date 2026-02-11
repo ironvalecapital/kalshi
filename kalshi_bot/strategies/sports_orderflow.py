@@ -91,6 +91,15 @@ def _auto_pick_from_summary(settings: BotSettings, data_client: KalshiDataClient
     return None
 
 
+def _pick_best_by_spread(candidates: list) -> Optional[object]:
+    if not candidates:
+        return None
+    def score(c):
+        spread = c.spread_yes or 0
+        return (spread * 1.0) + (c.trades_60m * 0.1)
+    return max(candidates, key=score)
+
+
 def run_sports_strategy(
     settings: BotSettings,
     data_client: KalshiDataClient,
@@ -136,7 +145,7 @@ def run_sports_strategy(
                         if cycles <= 0:
                             break
                     continue
-                pick = candidates[0]
+                pick = _pick_best_by_spread(candidates) or candidates[0]
         live_book = LiveOrderbook(settings, pick.ticker)
         flow = FlowFeatures()
         ob_state: Optional[OrderbookState] = None
@@ -260,10 +269,24 @@ def run_sports_strategy(
         if ev_after >= min_ev and spread <= settings.sports.max_spread_cents and fill_prob > 0.1:
             action = "BID_YES" if edge_cents >= 0 else "BID_NO"
 
+        # Near-resolved filter: avoid extreme tails.
+        if yes_ask is not None and (yes_ask <= settings.sports.avoid_price_low_cents or yes_ask >= settings.sports.avoid_price_high_cents):
+            action = "ABSTAIN"
+
         # Longshot bias filters: avoid buying YES at extreme low prices; prefer NO at tails.
         if action == "BID_YES" and yes_ask is not None and yes_ask <= settings.sports.yes_longshot_max_cents:
             action = "ABSTAIN"
         if action == "BID_NO" and yes_ask is not None and yes_ask < settings.sports.no_tail_min_cents:
+            action = "ABSTAIN"
+
+        # Depth-aware arbitrage check (informational)
+        arb_opportunity = False
+        arb_spread_cents = None
+        if yes_ask is not None and no_ask is not None:
+            arb_spread_cents = 100 - (yes_ask + no_ask)
+            if arb_spread_cents > 0 and min(depth_yes, depth_no) >= settings.sports.min_arb_depth:
+                arb_opportunity = True
+        if arb_opportunity and not settings.sports.allow_arb_taker:
             action = "ABSTAIN"
 
         order_result: Dict[str, Any] = {}
@@ -288,6 +311,9 @@ def run_sports_strategy(
                 use_fill_prob=settings.execution.kelly_use_fill_prob,
                 max_contracts=settings.sports.max_order_size,
             )
+            if depth > 0:
+                depth_cap = max(1, depth // max(1, settings.sports.depth_size_divisor))
+                size = min(size, depth_cap)
             if size <= 0:
                 order_result = {"status": "rejected", "reason": "kelly_size_zero"}
             else:
@@ -302,6 +328,8 @@ def run_sports_strategy(
                         client_order_id=f"sports-{int(time.time())}",
                     )
                     order_result = exec_engine.place_order(order)
+                    if order_result.get("status") == "submitted":
+                        audit.log("order", "order submitted", {"market": pick.ticker, "side": order.side, "price": price, "count": size})
                 else:
                     order_result = {"status": "rejected", "reason": reason}
 
@@ -328,6 +356,8 @@ def run_sports_strategy(
                 "microprice": micro,
                 "vwap_5m": vwap,
                 "realized_var_1m": vol,
+                "arb_opportunity": arb_opportunity,
+                "arb_spread_cents": arb_spread_cents,
             },
             "model": {
                 "p_next": p_next,
