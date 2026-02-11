@@ -92,6 +92,8 @@ class LiveOrderbook:
     def apply_delta(self, msg: Dict[str, Any]) -> None:
         delta = msg.get("msg", msg)
         side = delta.get("side")
+        if delta.get("price") is None or delta.get("size") is None:
+            return
         price = int(delta.get("price"))
         size = int(delta.get("size"))
         book = self.state.yes_bids if side == "yes" else self.state.no_bids
