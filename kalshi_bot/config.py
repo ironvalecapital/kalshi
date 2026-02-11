@@ -173,14 +173,14 @@ class SportsConfig(BaseModel):
         "TEAM",
     ]
     allowlist: list = []
-    max_spread_cents: float = 50.0
+    max_spread_cents: float = 70.0
     min_trades_60m: int = 0
     min_trades_5m: int = 0
     min_top_depth: int = 0
-    min_ev_cents: float = 0.75
+    min_ev_cents: float = 0.25
     extreme_edge_cents: float = 6.0
     urgency_window_sec: int = 300
-    min_order_interval_sec: int = 5
+    min_order_interval_sec: int = 3
     max_cancels_per_min: int = 10
     top_n: int = 50
     base_size: int = 1
@@ -191,6 +191,8 @@ class SportsConfig(BaseModel):
     no_tail_min_cents: int = 90
     maker_only: bool = True
     category_ev_multiplier: float = 1.25
+    max_scan_markets: int = 200
+    markets_cache_ttl_sec: int = 90
 
 
 class BotSettings(BaseSettings):

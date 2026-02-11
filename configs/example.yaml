@@ -82,14 +82,14 @@ sports:
   statuses: ["open"]
   keywords: ["SPORT", "SPORTS", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "GAME", "MATCH", "TEAM"]
   allowlist: []
-  max_spread_cents: 50.0
+  max_spread_cents: 70.0
   min_trades_60m: 0
   min_trades_5m: 0
   min_top_depth: 0
-  min_ev_cents: 0.75
+  min_ev_cents: 0.25
   extreme_edge_cents: 6.0
   urgency_window_sec: 300
-  min_order_interval_sec: 5
+  min_order_interval_sec: 3
   max_cancels_per_min: 10
   top_n: 50
   base_size: 1
@@ -99,3 +99,5 @@ sports:
   no_tail_min_cents: 90
   maker_only: true
   category_ev_multiplier: 1.25
+  max_scan_markets: 200
+  markets_cache_ttl_sec: 90
