@@ -98,7 +98,7 @@ def pick_weather_candidates(settings: BotSettings, data_client: KalshiDataClient
             break
     candidates: List[MarketCandidate] = []
     for m in markets:
-        if not is_weather_market(settings, m):
+        if not is_weather_market(settings, m) and not settings.weather.allow_unmatched_markets:
             continue
         close_time = parse_close_time(m)
         if not close_time:

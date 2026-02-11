@@ -56,6 +56,18 @@ kalshi-bot run --strategy bayes --market CPI-24APR --live --i-understand-risk
 ## Notes
 - `kalshi-python` is used where possible, but current Kalshi docs recommend `kalshi-python-sync` for newer endpoints. This project keeps compatibility with `kalshi-python` and relies on direct REST calls for endpoints not exposed in that SDK.
 
+## Helpful Links
+- Kalshi API docs: [docs.kalshi.com](https://docs.kalshi.com/)
+- Kalshi rate limits: [Rate Limits](https://docs.kalshi.com/getting_started/rate_limits)
+- Kalshi orderbook endpoint: [Get Market Orderbook](https://docs.kalshi.com/api-reference/markets/get-market-orderbook)
+- Kalshi trades endpoint: [Get Trades](https://docs.kalshi.com/api-reference/markets/get-trades)
+- Kalshi order create: [Create Order](https://docs.kalshi.com/api-reference/orders/create-order)
+- Kalshi fee schedule (PDF): [Fee Schedule](https://kalshi.com/docs/kalshi-fee-schedule.pdf)
+- Kalshi authenticated requests: [Quick Start Auth](https://docs.kalshi.com/getting_started/quick_start_authenticated_requests)
+- NWS API (User-Agent required): [api.weather.gov](https://api.weather.gov/)
+- NWS points endpoint: [Points API](https://www.weather.gov/documentation/services-web-api#/default/point)
+- Render deployment docs: [Render Python](https://render.com/docs/deploy-python)
+
 ## Files
 - `kalshi_bot/` core bot modules
 - `docs/OPERATING_RULES.md` safe operation and incident procedures

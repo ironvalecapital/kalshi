@@ -26,6 +26,12 @@ from .market_picker import pick_weather_candidates
 from .models.bayes_prior import bayes_update, choose_prior
 from .models.consistency import check_consistency
 from .models.microstructure import adjust_for_event_time
+from .market_selector import pick_sports_candidates
+from .orderbook_live import LiveOrderbook
+from .flow_features import FlowFeatures
+from .strategies.sports_orderflow import run_sports_strategy
+from .ingest.orderflow import sync_trades
+from .tools.breakeven import breakeven_yes, breakeven_no
 from .rate_limit import RateLimiter, tier_to_limits
 from .risk import RiskManager
 from .strategies.weather_high_temp import run_weather_strategy
@@ -147,6 +153,59 @@ def pick_weather(
 
 
 @app.command()
+def pick_sports(
+    top: int = typer.Option(20, help="Top N"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    candidates = pick_sports_candidates(settings, data_client, top_n=top)
+    if not candidates:
+        console.print("No suitable sports markets found.")
+        raise typer.Exit(0)
+    table = Table(title="Sports Market Pick")
+    table.add_column("Ticker")
+    table.add_column("Spread")
+    table.add_column("Trades(60m)")
+    table.add_column("DepthTop3")
+    for c in candidates:
+        table.add_row(c.ticker, str(c.spread_yes), str(c.trades_60m), str(c.depth_top3))
+    console.print(table)
+
+
+@app.command()
+def watch_flow(
+    market: str = typer.Option(..., help="Market ticker"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    flow = FlowFeatures()
+    book = LiveOrderbook(settings, market)
+
+    async def _run():
+        async def on_update(state):
+            best_yes = state.best_yes_bid()
+            best_yes_ask = state.best_yes_ask()
+            if best_yes is not None and best_yes_ask is not None:
+                mid = (best_yes + best_yes_ask) / 2
+                flow.update_mid(mid)
+            console.print(
+                {
+                    "market": market,
+                    "best_yes": best_yes,
+                    "best_yes_ask": best_yes_ask,
+                    "spread": state.spread_yes(),
+                    "imbalance": flow.imbalance(state.depth_topk(3) // 2, state.depth_topk(3) // 2),
+                    "momentum_30s": flow.momentum(30),
+                }
+            )
+
+        await book.run(on_update)
+
+    asyncio.run(_run())
+
+
+@app.command()
 def run_weather(
     demo: bool = typer.Option(True, help="Use demo environment"),
     live: bool = typer.Option(False, help="Use live environment"),
@@ -169,6 +228,160 @@ def run_weather(
     overrides = settings.weather.market_overrides or {}
     run_weather_strategy(settings, data_client, ledger, audit, risk, exec_engine, overrides, cycles, sleep, live)
 
+
+@app.command()
+def run_sports(
+    demo: bool = typer.Option(True, help="Use demo environment"),
+    live: bool = typer.Option(False, help="Use live environment"),
+    i_understand_risk: bool = typer.Option(False, help="Confirm live trading"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+    cycles: int = typer.Option(1, help="Number of cycles"),
+    sleep: int = typer.Option(10, help="Seconds between cycles"),
+):
+    if live:
+        demo = False
+    ensure_demo_or_live(demo, live, i_understand_risk)
+    settings = build_settings(config)
+    settings.data.env = "prod" if live else "demo"
+    console.print("DEMO MODE" if not live else "LIVE MODE")
+    _, data_client = build_clients(settings)
+    ledger = Ledger(settings.db_path)
+    audit = AuditLogger(ledger, settings.log_path)
+    risk = RiskManager(settings.risk)
+    exec_engine = ExecutionEngine(data_client, ledger, risk, settings.execution)
+    run_sports_strategy(settings, data_client, ledger, audit, risk, exec_engine, cycles, sleep, live)
+
+
+@app.command()
+def ingest_trades(
+    ticker: str = typer.Option(..., help="Market ticker to ingest trades for"),
+    lookback: int = typer.Option(3600, help="Lookback seconds to fetch trades"),
+    limit: int = typer.Option(200, help="Trades page size"),
+    max_pages: int = typer.Option(20, help="Max pages to fetch"),
+    loop: bool = typer.Option(False, help="Continuously ingest"),
+    sleep: int = typer.Option(30, help="Seconds between ingest cycles"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    """Ingest recent trades (orderflow tape) into the SQLite ledger."""
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    ledger = Ledger(settings.db_path)
+    while True:
+        stored, total = sync_trades(
+            data_client,
+            ledger,
+            ticker=ticker,
+            lookback_sec=lookback,
+            limit=limit,
+            max_pages=max_pages,
+        )
+        console.print(f"Ingested {stored} trades (fetched {total}) for {ticker}")
+        if not loop:
+            break
+        time.sleep(sleep)
+
+
+@app.command()
+def breakeven(
+    price: Optional[int] = typer.Option(None, help="Entry price in cents"),
+    side: str = typer.Option("yes", help="yes|no"),
+    count: int = typer.Option(1, help="Contract count"),
+    maker: bool = typer.Option(False, help="Assume maker fee"),
+    taker: bool = typer.Option(False, help="Assume taker fee"),
+    slip: float = typer.Option(0.0, help="Assumed slippage in cents"),
+    assume_spread: Optional[int] = typer.Option(None, help="Assumed spread in cents (for taker)"),
+    ticker: Optional[str] = typer.Option(None, help="Market ticker"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    if maker and taker:
+        raise typer.BadParameter("Choose either --maker or --taker")
+    maker_mode = maker or not taker
+    if ticker:
+        _, data_client = build_clients(settings)
+        ob = data_client.get_orderbook(ticker)
+        yes_bids = ob.get("yes", [])
+        no_bids = ob.get("no", [])
+        best_yes_bid = yes_bids[0][0] if yes_bids else None
+        best_no_bid = no_bids[0][0] if no_bids else None
+        yes_ask = 100 - best_no_bid if best_no_bid is not None else None
+        no_ask = 100 - best_yes_bid if best_yes_bid is not None else None
+        spread_yes = (yes_ask - best_yes_bid) if yes_ask is not None and best_yes_bid is not None else None
+        rows = []
+        if yes_ask is not None and best_yes_bid is not None:
+            maker_price = min(yes_ask - 1, best_yes_bid + 1)
+            rows.append(("maker", "YES", maker_price, breakeven_yes(maker_price, count, True, slip)))
+            rows.append(("taker", "YES", yes_ask, breakeven_yes(yes_ask, count, False, (assume_spread or (spread_yes or 0)) / 2)))
+        if no_ask is not None and best_no_bid is not None:
+            maker_price = min(no_ask - 1, best_no_bid + 1)
+            rows.append(("maker", "NO", maker_price, breakeven_no(maker_price, count, True, slip)))
+            rows.append(("taker", "NO", no_ask, breakeven_no(no_ask, count, False, (assume_spread or (spread_yes or 0)) / 2)))
+        table = Table(title=f"Breakeven {ticker}")
+        table.add_column("Mode")
+        table.add_column("Side")
+        table.add_column("Entry")
+        table.add_column("Fee(total)")
+        table.add_column("Fee/contract")
+        table.add_column("Slip")
+        table.add_column("p*")
+        table.add_column("p_mkt")
+        table.add_column("Δp")
+        table.add_column("Edge(c)")
+        for mode, side_label, entry, r in rows:
+            p_star = r.get("p_break_even") or r.get("p_break_even_no")
+            p_mkt = r.get("p_market") or r.get("p_market_no")
+            table.add_row(
+                mode,
+                side_label,
+                str(entry),
+                f"{r['fee_total_cents']:.0f}",
+                f"{r['fee_per_contract_cents']:.2f}",
+                f"{r['slip_cents']:.2f}",
+                f"{p_star:.4f}",
+                f"{p_mkt:.4f}",
+                f"{r['delta_p']:.4f}",
+                f"{r['edge_cents']:.2f}",
+            )
+        console.print(table)
+        return
+
+    if price is None:
+        raise typer.BadParameter("Provide --price or --ticker")
+    side = side.lower()
+    if side not in ("yes", "no"):
+        raise typer.BadParameter("--side must be yes or no")
+    if taker and assume_spread is not None:
+        slip = assume_spread / 2
+    if side == "yes":
+        r = breakeven_yes(price, count, maker_mode, slip)
+    else:
+        r = breakeven_no(price, count, maker_mode, slip)
+    table = Table(title="Breakeven")
+    table.add_column("Mode")
+    table.add_column("Side")
+    table.add_column("Entry")
+    table.add_column("Fee(total)")
+    table.add_column("Fee/contract")
+    table.add_column("Slip")
+    table.add_column("p*")
+    table.add_column("p_mkt")
+    table.add_column("Δp")
+    table.add_column("Edge(c)")
+    p_star = r.get("p_break_even") or r.get("p_break_even_no")
+    p_mkt = r.get("p_market") or r.get("p_market_no")
+    table.add_row(
+        "maker" if maker_mode else "taker",
+        side.upper(),
+        str(price),
+        f"{r['fee_total_cents']:.0f}",
+        f"{r['fee_per_contract_cents']:.2f}",
+        f"{r['slip_cents']:.2f}",
+        f"{p_star:.4f}",
+        f"{p_mkt:.4f}",
+        f"{r['delta_p']:.4f}",
+        f"{r['edge_cents']:.2f}",
+    )
+    console.print(table)
 
 @app.command()
 def backtest(

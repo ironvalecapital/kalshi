@@ -47,28 +47,29 @@ class DataConfig(BaseModel):
 
 class WeatherConfig(BaseModel):
     forecast_sigma_f: float = 2.0
-    min_fill_prob: float = 0.25
-    max_spread_cents: float = 12.0
-    min_edge_after_fees_cents: float = 1.5
-    min_time_to_close_hours: float = 2.0
-    max_time_to_close_hours: float = 48.0
+    min_fill_prob: float = 0.05
+    max_spread_cents: float = 30.0
+    min_edge_after_fees_cents: float = 0.25
+    min_time_to_close_hours: float = 0.5
+    max_time_to_close_hours: float = 168.0
     w_trades: float = 1.0
     w_volume: float = 0.1
     w_spread: float = 0.05
     min_trades_24h: int = 0
-    top_n: int = 200
+    top_n: int = 300
+    allow_unmatched_markets: bool = True
     bid_improve_cents: int = 1
     max_depth_levels: int = 3
     allow_cross_spread: bool = False
-    min_rr: float = 1.5
+    min_rr: float = 1.05
     max_order_size: int = 10
     ev_size_scale_cents: float = 3.0
     depth_fill_weight: float = 0.005
     trades_fill_weight: float = 0.02
     regime_t1_hours: float = 24.0
-    regime_t2_hours: float = 2.0
-    near_close_min_rr: float = 2.0
-    near_close_min_ev_cents: float = 2.5
+    regime_t2_hours: float = 1.0
+    near_close_min_rr: float = 1.1
+    near_close_min_ev_cents: float = 0.5
     keywords: list = [
         "WEATHER",
         "TEMP",
@@ -96,6 +97,36 @@ class WeatherConfig(BaseModel):
     }
 
 
+class SportsConfig(BaseModel):
+    keywords: list = [
+        "SPORT",
+        "SPORTS",
+        "NBA",
+        "NFL",
+        "NHL",
+        "MLB",
+        "NCAAB",
+        "NCAAF",
+        "GAME",
+        "MATCH",
+        "TEAM",
+    ]
+    allowlist: list = []
+    max_spread_cents: float = 30.0
+    min_trades_60m: int = 0
+    min_trades_5m: int = 0
+    min_top_depth: int = 0
+    min_ev_cents: float = 2.0
+    extreme_edge_cents: float = 6.0
+    urgency_window_sec: int = 300
+    min_order_interval_sec: int = 5
+    max_cancels_per_min: int = 10
+    top_n: int = 50
+    base_size: int = 1
+    max_order_size: int = 10
+    allow_unmatched_markets: bool = True
+
+
 class BotSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -117,6 +148,7 @@ class BotSettings(BaseSettings):
     risk: RiskLimits = RiskLimits()
     execution: ExecutionConfig = ExecutionConfig()
     weather: WeatherConfig = WeatherConfig()
+    sports: SportsConfig = SportsConfig()
 
 
 def load_config(path: Optional[str] = None) -> BotSettings:
