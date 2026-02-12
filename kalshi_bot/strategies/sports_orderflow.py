@@ -129,6 +129,9 @@ def run_sports_strategy(
     football_client: Optional[FootballDataClient] = None
     nba_client: Optional[BallDontLieClient] = None
     mma_client: Optional[BallDontLieClient] = None
+    mls_client: Optional[BallDontLieClient] = None
+    ncaaf_client: Optional[BallDontLieClient] = None
+    ncaab_client: Optional[BallDontLieClient] = None
     if settings.sports_external_enabled:
         sportsdb_client = SportsDBClient(api_key=settings.sportsdb_api_key)
         if settings.football_data_api_key:
@@ -136,6 +139,9 @@ def run_sports_strategy(
         if settings.balldontlie_api_key:
             nba_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/v1")
             mma_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/mma/v1")
+            mls_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/mls/v1")
+            ncaaf_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/ncaaf/v1")
+            ncaab_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/ncaab/v1")
 
     while True:
         if exec_engine._kill_switch():
@@ -429,6 +435,27 @@ def run_sports_strategy(
                             external_meta["balldontlie_mma_events"] = (mma_events.get("data") or [])[:1]
                         except Exception as exc:
                             external_meta["balldontlie_mma_error"] = str(exc)
+                    if mls_client and ("MLS" in title or "SOCCER" in title):
+                        mteams = mls_client.search_teams(home)
+                        if mteams:
+                            mteam_id = mteams[0].get("id")
+                            if mteam_id:
+                                mgames = mls_client.games_on_date(datetime.now(timezone.utc).date(), int(mteam_id))
+                                external_meta["balldontlie_mls_games"] = [g.__dict__ for g in mgames[:1]]
+                    if ncaaf_client and ("NCAAF" in title or "CFB" in title or "COLLEGE FOOTBALL" in title):
+                        fteams = ncaaf_client.search_teams(home)
+                        if fteams:
+                            fteam_id = fteams[0].get("id")
+                            if fteam_id:
+                                fgames = ncaaf_client.games_on_date(datetime.now(timezone.utc).date(), int(fteam_id))
+                                external_meta["balldontlie_ncaaf_games"] = [g.__dict__ for g in fgames[:1]]
+                    if ncaab_client and ("NCAAB" in title or "COLLEGE BASKETBALL" in title):
+                        bteams = ncaab_client.search_teams(home)
+                        if bteams:
+                            bteam_id = bteams[0].get("id")
+                            if bteam_id:
+                                bgames = ncaab_client.games_on_date(datetime.now(timezone.utc).date(), int(bteam_id))
+                                external_meta["balldontlie_ncaab_games"] = [g.__dict__ for g in bgames[:1]]
                 except Exception as exc:
                     external_meta["sportsdb_error"] = str(exc)
         report = {
