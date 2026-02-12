@@ -27,8 +27,8 @@ class SportsDBClient:
     """
 
     def __init__(self, api_key: Optional[str] = None, timeout: float = 10.0) -> None:
-        # TheSportsDB provides a free test key "3" for v1 endpoints.
-        self.api_key = api_key or "3"
+        # TheSportsDB provides a free test key "123" for v1 endpoints.
+        self.api_key = api_key or "123"
         self.base = "https://www.thesportsdb.com/api/v1/json"
         self.timeout = timeout
         self._team_cache: dict[str, List[Dict[str, Any]]] = {}
