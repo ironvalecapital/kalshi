@@ -156,7 +156,7 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
             continue
         pass
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         futures = [executor.submit(fetch_one, m) for m in markets]
         for fut in as_completed(futures):
             cand = fut.result()

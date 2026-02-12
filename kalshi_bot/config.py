@@ -90,7 +90,7 @@ class WeatherConfig(BaseModel):
     default_city: str = "NYC"
     allowed_cities: list = []
     max_trades_per_cycle: int = 5
-    max_scan_markets: int = 400
+    max_scan_markets: int = 800
     city_map: dict = {
         "NYC": {"lat": 40.7128, "lon": -74.0060},
         "CHI": {"lat": 41.8781, "lon": -87.6298},
@@ -196,7 +196,7 @@ class SportsConfig(BaseModel):
     no_tail_min_cents: int = 90
     maker_only: bool = True
     category_ev_multiplier: float = 1.25
-    max_scan_markets: int = 400
+    max_scan_markets: int = 600
     markets_cache_ttl_sec: int = 90
     auto_pick_use_summary: bool = True
     auto_pick_top_n: int = 100

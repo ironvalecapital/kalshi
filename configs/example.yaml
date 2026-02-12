@@ -28,7 +28,7 @@ weather:
   default_city: "NYC"
   allowed_cities: []
   max_trades_per_cycle: 5
-  max_scan_markets: 400
+  max_scan_markets: 800
   city_map:
     NYC: {lat: 40.7128, lon: -74.0060}
     CHI: {lat: 41.8781, lon: -87.6298}
@@ -104,7 +104,7 @@ sports:
   no_tail_min_cents: 90
   maker_only: true
   category_ev_multiplier: 1.25
-  max_scan_markets: 400
+  max_scan_markets: 600
   markets_cache_ttl_sec: 90
   auto_pick_use_summary: true
   auto_pick_top_n: 100
