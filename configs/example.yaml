@@ -120,3 +120,5 @@ sports:
   spread_scan_weight: 1.0
   simple_active_maker: true
   simple_min_spread_cents: 1
+  simple_imbalance_min: 0.03
+  simple_ladder_levels: 2

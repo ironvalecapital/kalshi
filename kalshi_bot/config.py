@@ -212,6 +212,8 @@ class SportsConfig(BaseModel):
     spread_scan_weight: float = 1.0
     simple_active_maker: bool = True
     simple_min_spread_cents: int = 1
+    simple_imbalance_min: float = 0.03
+    simple_ladder_levels: int = 2
 
 
 class BotSettings(BaseSettings):

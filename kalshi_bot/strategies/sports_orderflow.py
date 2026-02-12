@@ -268,9 +268,15 @@ def run_sports_strategy(
                 min_ev *= settings.sports.category_ev_multiplier
         if settings.sports.simple_active_maker:
             if spread >= settings.sports.simple_min_spread_cents and spread <= settings.sports.max_spread_cents:
-                # Simple maker: fade the heavier side to capture spread.
-                action = "BID_NO" if depth_yes > depth_no else "BID_YES"
+                # Simple maker: use imbalance + momentum to choose side.
+                if abs(imbalance) < settings.sports.simple_imbalance_min:
+                    action = "ABSTAIN"
+                else:
+                    action = "BID_NO" if imbalance > 0 else "BID_YES"
                 edge_cents = max(0.0, (spread / 2.0) - fee)
+                # Penalize if spread is widening fast.
+                if spread_trend > 0.5:
+                    edge_cents *= 0.5
                 ev_after = edge_cents
                 if ev_after < min_ev:
                     action = "ABSTAIN"
@@ -308,7 +314,9 @@ def run_sports_strategy(
                     price = no_bid or 0
             fee_per = fee_cents(1, price, maker=True)
             if settings.sports.simple_active_maker:
-                size = max(1, min(settings.sports.max_order_size, max(1, depth // max(1, settings.sports.depth_size_divisor))))
+                trade_scale = max(1, int(trades_5m / 5))
+                depth_scale = max(1, depth // max(1, settings.sports.depth_size_divisor))
+                size = max(1, min(settings.sports.max_order_size, max(1, trade_scale + depth_scale)))
             else:
                 if action == "BID_YES":
                     kfrac = kelly_fraction_yes(p_next, price, fee_per, 0.0)
@@ -331,17 +339,32 @@ def run_sports_strategy(
             else:
                 ok, reason = risk.check_order(pick.ticker, size, price / 100.0)
                 if ok:
-                    order = OrderRequest(
-                        market_id=pick.ticker,
-                        side="yes" if action == "BID_YES" else "no",
-                        action="buy",
-                        price_cents=price,
-                        count=size,
-                        client_order_id=f"sports-{int(time.time())}",
-                    )
-                    order_result = exec_engine.place_order(order)
-                    if order_result.get("status") == "submitted":
-                        audit.log("order", "order submitted", {"market": pick.ticker, "side": order.side, "price": price, "count": size})
+                    # Ladder one additional level if spread permits.
+                    ladder_levels = max(1, settings.sports.simple_ladder_levels)
+                    placed = False
+                    for level in range(ladder_levels):
+                        price_level = price - level
+                        if price_level <= 0:
+                            break
+                        if settings.sports.maker_only:
+                            if action == "BID_YES" and yes_ask is not None and price_level >= yes_ask:
+                                continue
+                            if action == "BID_NO" and no_ask is not None and price_level >= no_ask:
+                                continue
+                        order = OrderRequest(
+                            market_id=pick.ticker,
+                            side="yes" if action == "BID_YES" else "no",
+                            action="buy",
+                            price_cents=price_level,
+                            count=max(1, size // ladder_levels),
+                            client_order_id=f"sports-{int(time.time())}-{level}",
+                        )
+                        order_result = exec_engine.place_order(order)
+                        placed = placed or (order_result.get("status") == "submitted")
+                        if order_result.get("status") == "submitted":
+                            audit.log("order", "order submitted", {"market": pick.ticker, "side": order.side, "price": price_level, "count": order.count})
+                    if not placed and order_result.get("status") != "submitted":
+                        order_result = {"status": "rejected", "reason": "no_ladder_orders"}
                 else:
                     order_result = {"status": "rejected", "reason": reason}
 
