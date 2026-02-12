@@ -50,10 +50,10 @@ class DataConfig(BaseModel):
 
 class WeatherConfig(BaseModel):
     forecast_sigma_f: float = 2.0
-    min_fill_prob: float = 0.02
-    max_spread_cents: float = 50.0
-    min_edge_after_fees_cents: float = 0.1
-    entry_edge_pp: float = 15.0
+    min_fill_prob: float = 0.008
+    max_spread_cents: float = 65.0
+    min_edge_after_fees_cents: float = 0.03
+    entry_edge_pp: float = 8.0
     exit_edge_pp: float = 45.0
     min_time_to_close_hours: float = 0.5
     max_time_to_close_hours: float = 168.0
@@ -181,7 +181,7 @@ class SportsConfig(BaseModel):
     min_trades_60m: int = 0
     min_trades_5m: int = 0
     min_top_depth: int = 0
-    min_ev_cents: float = 0.25
+    min_ev_cents: float = 0.12
     extreme_edge_cents: float = 6.0
     urgency_window_sec: int = 300
     min_order_interval_sec: int = 3
@@ -195,14 +195,14 @@ class SportsConfig(BaseModel):
     no_tail_min_cents: int = 90
     maker_only: bool = True
     category_ev_multiplier: float = 1.25
-    max_scan_markets: int = 200
+    max_scan_markets: int = 400
     markets_cache_ttl_sec: int = 90
     auto_pick_use_summary: bool = True
-    auto_pick_top_n: int = 50
+    auto_pick_top_n: int = 100
     daily_report_interval_sec: int = 3600
     stale_order_max_age_sec: int = 300
     stale_order_cancel_edge_cents: float = 0.1
-    min_spread_cents: int = 4
+    min_spread_cents: int = 2
     avoid_price_low_cents: int = 2
     avoid_price_high_cents: int = 98
     depth_size_divisor: int = 5
@@ -210,7 +210,7 @@ class SportsConfig(BaseModel):
     allow_arb_taker: bool = False
     spread_scan_weight: float = 1.0
     simple_active_maker: bool = True
-    simple_min_spread_cents: int = 4
+    simple_min_spread_cents: int = 2
 
 
 class BotSettings(BaseSettings):
