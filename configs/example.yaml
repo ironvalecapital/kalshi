@@ -83,6 +83,9 @@ execution:
   kelly_fraction: 0.33
   kelly_use_fill_prob: true
 
+sports_external_enabled: false
+sportsdb_api_key: null
+
 sports:
   statuses: ["open"]
   keywords: ["SPORT", "SPORTS", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "GAME", "MATCH", "TEAM"]

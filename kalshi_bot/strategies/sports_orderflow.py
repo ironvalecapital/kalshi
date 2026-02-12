@@ -17,6 +17,7 @@ from ..execution import ExecutionEngine, OrderRequest
 from ..ev import kelly_contracts, kelly_fraction_no, kelly_fraction_yes
 from ..fee_model import fee_cents
 from ..flow_features import FlowFeatures
+from ..adapters.sportsdb import SportsDBClient
 from ..ledger import Ledger
 from ..market_selector import pick_sports_candidates
 from ..orderbook_live import LiveOrderbook, OrderbookState
@@ -122,6 +123,9 @@ def run_sports_strategy(
     last_report_ts = time.time()
     cycle_stats = {"decisions": 0, "orders": 0, "abstains": 0}
     last_edge_by_market: dict[str, float] = {}
+    sportsdb_client: Optional[SportsDBClient] = None
+    if settings.sports_external_enabled:
+        sportsdb_client = SportsDBClient(api_key=settings.sportsdb_api_key)
 
     while True:
         if exec_engine._kill_switch():
@@ -368,6 +372,33 @@ def run_sports_strategy(
                 else:
                     order_result = {"status": "rejected", "reason": reason}
 
+        external_meta: Dict[str, Any] = {}
+        if sportsdb_client and pick.title:
+            # Best-effort parse "Team A vs Team B" or "Team A @ Team B"
+            title = pick.title
+            teams = []
+            if " vs " in title:
+                teams = [t.strip() for t in title.split(" vs ", 1)]
+            elif " @ " in title:
+                teams = [t.strip() for t in title.split(" @ ", 1)]
+            if teams:
+                home = teams[0]
+                away = teams[1] if len(teams) > 1 else None
+                try:
+                    home_teams = sportsdb_client.search_teams(home)
+                    away_teams = sportsdb_client.search_teams(away) if away else []
+                    if home_teams:
+                        team_id = home_teams[0].get("idTeam")
+                        if team_id:
+                            next_events = sportsdb_client.events_next(str(team_id))
+                            external_meta["sportsdb_next"] = next_events[:1]
+                    if away_teams and not external_meta.get("sportsdb_next"):
+                        team_id = away_teams[0].get("idTeam")
+                        if team_id:
+                            next_events = sportsdb_client.events_next(str(team_id))
+                            external_meta["sportsdb_next"] = next_events[:1]
+                except Exception as exc:
+                    external_meta["sportsdb_error"] = str(exc)
         report = {
             "market_ticker": pick.ticker,
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -403,6 +434,7 @@ def run_sports_strategy(
             "fill_prob": fill_prob,
             "action": action,
             "order_result": order_result,
+            "external": external_meta,
         }
 
         write_decision_report(settings, report)

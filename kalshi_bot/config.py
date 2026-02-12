@@ -231,6 +231,8 @@ class BotSettings(BaseSettings):
     weather_geojson_path: Optional[str] = Field(default=None, validation_alias="WEATHER_GEOJSON")
     noaa_token: Optional[str] = Field(default=None, validation_alias="NOAA_TOKEN")
     weather_user_agent: str = Field(default="kalshi_decision_engine (contact: ops@example.com)", validation_alias="NWS_USER_AGENT")
+    sports_external_enabled: bool = Field(default=False, validation_alias="SPORTS_EXTERNAL_ENABLED")
+    sportsdb_api_key: Optional[str] = Field(default=None, validation_alias="SPORTSDB_API_KEY")
 
     data: DataConfig = DataConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()
