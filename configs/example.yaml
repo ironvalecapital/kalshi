@@ -48,9 +48,9 @@ weather:
   allow_unmatched_markets: true
   bid_improve_cents: 1
   max_depth_levels: 3
-  allow_cross_spread: false
+  allow_cross_spread: true
   min_rr: 1.01
-  max_order_size: 10
+  max_order_size: 25
   ev_size_scale_cents: 3.0
   depth_fill_weight: 0.005
   trades_fill_weight: 0.02
@@ -115,7 +115,7 @@ sports:
   avoid_price_high_cents: 98
   depth_size_divisor: 5
   min_arb_depth: 10
-  allow_arb_taker: false
+  allow_arb_taker: true
   spread_scan_weight: 1.0
   simple_active_maker: true
   simple_min_spread_cents: 1

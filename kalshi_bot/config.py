@@ -67,9 +67,9 @@ class WeatherConfig(BaseModel):
     allow_unmatched_markets: bool = True
     bid_improve_cents: int = 1
     max_depth_levels: int = 3
-    allow_cross_spread: bool = False
+    allow_cross_spread: bool = True
     min_rr: float = 1.01
-    max_order_size: int = 10
+    max_order_size: int = 25
     ev_size_scale_cents: float = 3.0
     depth_fill_weight: float = 0.005
     trades_fill_weight: float = 0.02
@@ -207,7 +207,7 @@ class SportsConfig(BaseModel):
     avoid_price_high_cents: int = 98
     depth_size_divisor: int = 5
     min_arb_depth: int = 10
-    allow_arb_taker: bool = False
+    allow_arb_taker: bool = True
     spread_scan_weight: float = 1.0
     simple_active_maker: bool = True
     simple_min_spread_cents: int = 1
