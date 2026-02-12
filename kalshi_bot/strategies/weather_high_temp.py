@@ -73,6 +73,9 @@ def resolve_market_mapping(
             break
     if not city_code:
         city_code = settings.weather.default_city
+    if settings.weather.allowed_cities:
+        if city_code not in settings.weather.allowed_cities:
+            return None
     city = merged_weather_locations(settings).get(city_code)
     if not city:
         return None
@@ -112,6 +115,19 @@ def run_weather_strategy(
 
     nws = NWSClient(user_agent=settings.weather_user_agent)
     loop_forever = cycles <= 0
+
+    def cancel_open_orders_for_market(ticker: str) -> None:
+        try:
+            open_orders = data_client.get_orders(status="open", limit=200)
+        except Exception:
+            return
+        orders = open_orders.get("orders", [])
+        for order in orders:
+            if order.get("ticker") == ticker:
+                order_id = order.get("order_id") or order.get("id")
+                if order_id:
+                    exec_engine.cancel_order(str(order_id))
+
     while True:
         if exec_engine._kill_switch():
             audit.log("kill", "kill switch enabled", {})
@@ -122,6 +138,7 @@ def run_weather_strategy(
             time.sleep(sleep_s)
             continue
         audit.log("heartbeat", "weather cycle", {"candidates": len(candidates)})
+        trades_this_cycle = 0
         for cand in candidates:
             market = data_client.get_market(cand.ticker)
             mapping = resolve_market_mapping(settings, market, overrides)
@@ -148,15 +165,24 @@ def run_weather_strategy(
             fee_no = estimate_fee_cents(1, no_ask or 0, True, settings.execution.maker_fee_rate, settings.execution.taker_fee_rate)
             ev_yes = ev_buy_yes_cents(p_yes, yes_ask) - fee_yes - spread_penalty_cents(spread_yes)
             ev_no = ev_buy_no_cents(p_yes, no_ask or 0) - fee_no - spread_penalty_cents(spread_yes)
-            depth = cand.depth_yes if action != "buy_no" else cand.depth_no
-            fill_prob = fill_probability(
+            fill_prob_yes = fill_probability(
                 spread_yes,
                 cand.trades_1h,
                 time_to_close,
-                depth=depth,
+                depth=cand.depth_yes,
                 trades_weight=settings.weather.trades_fill_weight,
                 depth_weight=settings.weather.depth_fill_weight,
             )
+            fill_prob_no = fill_probability(
+                spread_yes,
+                cand.trades_1h,
+                time_to_close,
+                depth=cand.depth_no,
+                trades_weight=settings.weather.trades_fill_weight,
+                depth_weight=settings.weather.depth_fill_weight,
+            )
+            edge_pp_yes = (p_yes - yes_ask / 100.0) * 100.0
+            edge_pp_no = ((1.0 - p_yes) - (no_ask or 0) / 100.0) * 100.0
 
             state = DecisionState(
                 ev_yes_cents=ev_yes,
@@ -170,6 +196,12 @@ def run_weather_strategy(
             action, score_val = choose_action(
                 state, weights={"w_ev": 1.0, "w_spread": 0.5, "w_vol": 0.5, "w_liq": 0.2, "w_risk": 1.0}
             )
+            if edge_pp_yes >= edge_pp_no and edge_pp_yes >= settings.weather.entry_edge_pp:
+                action = "buy_yes"
+            elif edge_pp_no > edge_pp_yes and edge_pp_no >= settings.weather.entry_edge_pp:
+                action = "buy_no"
+            else:
+                action = "abstain"
 
             order_result: Dict[str, Any] = {}
             size = 0
@@ -177,6 +209,7 @@ def run_weather_strategy(
             rr_no = (1.0 - (no_ask or 1) / 100.0) / max(0.0001, (no_ask or 1) / 100.0)
             # EV gate: require fee-adjusted EV to exceed minimum
             if action in ("buy_yes", "buy_no"):
+                fill_prob = fill_prob_yes if action == "buy_yes" else fill_prob_no
                 if spread_yes > settings.weather.max_spread_cents or fill_prob < settings.weather.min_fill_prob:
                     action = "abstain"
                 if time_to_close < settings.weather.min_time_to_close_hours or time_to_close > settings.weather.max_time_to_close_hours:
@@ -194,6 +227,8 @@ def run_weather_strategy(
                         action = "abstain"
                     if action == "buy_no" and (ev_no < settings.weather.near_close_min_ev_cents or rr_no < settings.weather.near_close_min_rr):
                         action = "abstain"
+            if action == "abstain" and max(edge_pp_yes, edge_pp_no) < settings.weather.exit_edge_pp:
+                cancel_open_orders_for_market(cand.ticker)
             if action in ("buy_yes", "buy_no"):
                 if action == "buy_yes":
                     # Improve best bid by 1 cent, but keep below ask to remain maker.
@@ -220,7 +255,7 @@ def run_weather_strategy(
                     price_cents=price_cents,
                     kelly_fraction=kfrac,
                     fractional=settings.execution.kelly_fraction,
-                    fill_prob=fill_prob,
+                    fill_prob=fill_prob_yes if action == "buy_yes" else fill_prob_no,
                     use_fill_prob=settings.execution.kelly_use_fill_prob,
                     max_contracts=settings.weather.max_order_size,
                 )
@@ -269,7 +304,10 @@ def run_weather_strategy(
                     "p_yes": p_yes,
                     "ev_yes_cents": ev_yes,
                     "ev_no_cents": ev_no,
-                    "fill_prob": fill_prob,
+                    "fill_prob_yes": fill_prob_yes,
+                    "fill_prob_no": fill_prob_no,
+                    "edge_pp_yes": edge_pp_yes,
+                    "edge_pp_no": edge_pp_no,
                     "search_score": score_val,
                     "rr_yes": rr_yes,
                     "rr_no": rr_no,
@@ -279,6 +317,11 @@ def run_weather_strategy(
                 "order_result": order_result,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
+            fill_prob_used = None
+            if action == "buy_yes":
+                fill_prob_used = fill_prob_yes
+            elif action == "buy_no":
+                fill_prob_used = fill_prob_no
             write_decision_report(settings, report)
             ledger.record_prediction(
                 cand.ticker,
@@ -288,9 +331,21 @@ def run_weather_strategy(
                 {"mu": mu, "sigma": sigma},
             )
             ledger.record_decision(
-                cand.ticker, "weather_high_temp", report["inputs"], report["signals"], max(ev_yes, ev_no), action, 1, {"fill_prob": fill_prob}, order_result
+                cand.ticker,
+                "weather_high_temp",
+                report["inputs"],
+                report["signals"],
+                max(ev_yes, ev_no),
+                action,
+                1,
+                {"fill_prob": fill_prob_used},
+                order_result,
             )
             audit.log("decision", "weather cycle", report)
+            if action in ("buy_yes", "buy_no"):
+                trades_this_cycle += 1
+                if trades_this_cycle >= settings.weather.max_trades_per_cycle:
+                    break
             break
         time.sleep(sleep_s)
         if not loop_forever:

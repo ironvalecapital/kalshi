@@ -53,6 +53,8 @@ class WeatherConfig(BaseModel):
     min_fill_prob: float = 0.02
     max_spread_cents: float = 50.0
     min_edge_after_fees_cents: float = 0.1
+    entry_edge_pp: float = 15.0
+    exit_edge_pp: float = 45.0
     min_time_to_close_hours: float = 0.5
     max_time_to_close_hours: float = 168.0
     use_close_window: bool = False
@@ -86,6 +88,8 @@ class WeatherConfig(BaseModel):
     ]
     market_overrides: dict = {}
     default_city: str = "NYC"
+    allowed_cities: list = []
+    max_trades_per_cycle: int = 5
     city_map: dict = {
         "NYC": {"lat": 40.7128, "lon": -74.0060},
         "CHI": {"lat": 41.8781, "lon": -87.6298},

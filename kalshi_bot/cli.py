@@ -35,6 +35,8 @@ from .tools.breakeven import breakeven_yes, breakeven_no
 from .rate_limit import RateLimiter, tier_to_limits
 from .risk import RiskManager
 from .strategies.weather_high_temp import run_weather_strategy
+from .watchlist import build_watchlist
+from .watchlist_server import serve_watchlist
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -171,6 +173,79 @@ def pick_sports(
     for c in candidates:
         table.add_row(c.ticker, str(c.spread_yes), str(c.trades_60m), str(c.depth_top3))
     console.print(table)
+
+
+@app.command()
+def watchlist(
+    top: int = typer.Option(20, help="Top N"),
+    include_weather: bool = typer.Option(True, help="Include weather lane"),
+    include_sports: bool = typer.Option(True, help="Include sports lane"),
+    loop: bool = typer.Option(False, help="Continuously refresh"),
+    interval: int = typer.Option(15, help="Seconds between refresh"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    while True:
+        items = build_watchlist(
+            settings,
+            data_client,
+            top=top,
+            include_weather=include_weather,
+            include_sports=include_sports,
+        )
+        table = Table(title="Watchlist")
+        table.add_column("Lane")
+        table.add_column("Ticker")
+        table.add_column("Title")
+        table.add_column("Status")
+        table.add_column("Spread")
+        table.add_column("Trades(1h)")
+        table.add_column("Trades(60m)")
+        table.add_column("DepthTop3")
+        table.add_column("Close")
+        for i in items:
+            table.add_row(
+                i.lane,
+                i.ticker,
+                i.title or "",
+                i.status or "",
+                "" if i.spread_cents is None else str(i.spread_cents),
+                "" if i.trades_1h is None else str(i.trades_1h),
+                "" if i.trades_60m is None else str(i.trades_60m),
+                "" if i.depth_top3 is None else str(i.depth_top3),
+                i.close_time or "",
+            )
+        console.clear()
+        console.print(table)
+        if not loop:
+            break
+        time.sleep(interval)
+
+
+@app.command()
+def watchlist_server(
+    host: str = typer.Option("0.0.0.0", help="Bind host"),
+    port: int = typer.Option(8080, help="Port"),
+    top: int = typer.Option(20, help="Top N"),
+    include_weather: bool = typer.Option(True, help="Include weather lane"),
+    include_sports: bool = typer.Option(True, help="Include sports lane"),
+    refresh: int = typer.Option(30, help="Seconds between refresh"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    console.print(f"Serving watchlist on http://{host}:{port}")
+    serve_watchlist(
+        settings,
+        data_client,
+        host=host,
+        port=port,
+        top=top,
+        include_weather=include_weather,
+        include_sports=include_sports,
+        refresh_sec=refresh,
+    )
 
 
 @app.command()
