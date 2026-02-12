@@ -94,8 +94,10 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
         markets = cache["markets"]
     else:
         for status in statuses:
-            resp = data_client.list_markets(status=status, limit=1000)
+            resp = data_client.list_markets(status=status, limit=min(1000, settings.sports.max_scan_markets))
             markets.extend(resp.get("markets", []))
+            if len(markets) >= settings.sports.max_scan_markets:
+                break
         setattr(pick_sports_candidates, cache_key, {"ts": now_ts, "markets": markets})
 
     # Pre-filter by volume to reduce downstream calls.
@@ -154,7 +156,7 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
             continue
         pass
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(fetch_one, m) for m in markets]
         for fut in as_completed(futures):
             cand = fut.result()

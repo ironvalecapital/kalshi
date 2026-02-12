@@ -90,6 +90,7 @@ class WeatherConfig(BaseModel):
     default_city: str = "NYC"
     allowed_cities: list = []
     max_trades_per_cycle: int = 5
+    max_scan_markets: int = 400
     city_map: dict = {
         "NYC": {"lat": 40.7128, "lon": -74.0060},
         "CHI": {"lat": 41.8781, "lon": -87.6298},
