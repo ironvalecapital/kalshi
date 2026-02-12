@@ -213,7 +213,7 @@ class SportsConfig(BaseModel):
     simple_active_maker: bool = True
     simple_min_spread_cents: int = 1
     simple_imbalance_min: float = 0.03
-    simple_ladder_levels: int = 2
+    simple_ladder_levels: int = 3
 
 
 class BotSettings(BaseSettings):
@@ -233,6 +233,8 @@ class BotSettings(BaseSettings):
     weather_user_agent: str = Field(default="kalshi_decision_engine (contact: ops@example.com)", validation_alias="NWS_USER_AGENT")
     sports_external_enabled: bool = Field(default=False, validation_alias="SPORTS_EXTERNAL_ENABLED")
     sportsdb_api_key: Optional[str] = Field(default=None, validation_alias="SPORTSDB_API_KEY")
+    football_data_api_key: Optional[str] = Field(default=None, validation_alias="FOOTBALL_DATA_API_KEY")
+    balldontlie_api_key: Optional[str] = Field(default=None, validation_alias="BALLDONTLIE_API_KEY")
 
     data: DataConfig = DataConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()

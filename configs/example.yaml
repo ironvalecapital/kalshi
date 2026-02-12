@@ -85,6 +85,8 @@ execution:
 
 sports_external_enabled: false
 sportsdb_api_key: null
+football_data_api_key: null
+balldontlie_api_key: null
 
 sports:
   statuses: ["open"]
@@ -124,4 +126,4 @@ sports:
   simple_active_maker: true
   simple_min_spread_cents: 1
   simple_imbalance_min: 0.03
-  simple_ladder_levels: 2
+  simple_ladder_levels: 3

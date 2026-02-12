@@ -18,6 +18,8 @@ from ..ev import kelly_contracts, kelly_fraction_no, kelly_fraction_yes
 from ..fee_model import fee_cents
 from ..flow_features import FlowFeatures
 from ..adapters.sportsdb import SportsDBClient
+from ..adapters.football_data import FootballDataClient
+from ..adapters.balldontlie import BallDontLieClient
 from ..ledger import Ledger
 from ..market_selector import pick_sports_candidates
 from ..orderbook_live import LiveOrderbook, OrderbookState
@@ -124,8 +126,16 @@ def run_sports_strategy(
     cycle_stats = {"decisions": 0, "orders": 0, "abstains": 0}
     last_edge_by_market: dict[str, float] = {}
     sportsdb_client: Optional[SportsDBClient] = None
+    football_client: Optional[FootballDataClient] = None
+    nba_client: Optional[BallDontLieClient] = None
+    mma_client: Optional[BallDontLieClient] = None
     if settings.sports_external_enabled:
         sportsdb_client = SportsDBClient(api_key=settings.sportsdb_api_key)
+        if settings.football_data_api_key:
+            football_client = FootballDataClient(api_key=settings.football_data_api_key)
+        if settings.balldontlie_api_key:
+            nba_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/v1")
+            mma_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/mma/v1")
 
     while True:
         if exec_engine._kill_switch():
@@ -373,7 +383,7 @@ def run_sports_strategy(
                     order_result = {"status": "rejected", "reason": reason}
 
         external_meta: Dict[str, Any] = {}
-        if sportsdb_client and pick.title:
+        if (sportsdb_client or football_client or nba_client) and pick.title:
             # Best-effort parse "Team A vs Team B" or "Team A @ Team B"
             title = pick.title
             teams = []
@@ -385,18 +395,40 @@ def run_sports_strategy(
                 home = teams[0]
                 away = teams[1] if len(teams) > 1 else None
                 try:
-                    home_teams = sportsdb_client.search_teams(home)
-                    away_teams = sportsdb_client.search_teams(away) if away else []
-                    if home_teams:
-                        team_id = home_teams[0].get("idTeam")
-                        if team_id:
-                            next_events = sportsdb_client.events_next(str(team_id))
-                            external_meta["sportsdb_next"] = next_events[:1]
-                    if away_teams and not external_meta.get("sportsdb_next"):
-                        team_id = away_teams[0].get("idTeam")
-                        if team_id:
-                            next_events = sportsdb_client.events_next(str(team_id))
-                            external_meta["sportsdb_next"] = next_events[:1]
+                    if sportsdb_client:
+                        home_teams = sportsdb_client.search_teams(home)
+                        away_teams = sportsdb_client.search_teams(away) if away else []
+                        if home_teams:
+                            team_id = home_teams[0].get("idTeam")
+                            if team_id:
+                                next_events = sportsdb_client.events_next(str(team_id))
+                                external_meta["sportsdb_next"] = next_events[:1]
+                        if away_teams and not external_meta.get("sportsdb_next"):
+                            team_id = away_teams[0].get("idTeam")
+                            if team_id:
+                                next_events = sportsdb_client.events_next(str(team_id))
+                                external_meta["sportsdb_next"] = next_events[:1]
+                    if football_client and ("FC" in title or "United" in title or "City" in title):
+                        fteams = football_client.search_teams(home)
+                        if fteams:
+                            fteam_id = fteams[0].get("id")
+                            if fteam_id:
+                                fmatches = football_client.matches_on_date(datetime.now(timezone.utc).date(), int(fteam_id))
+                                external_meta["football_data_matches"] = [m.__dict__ for m in fmatches[:1]]
+                    if nba_client and ("NBA" in title or "Lakers" in title or "Warriors" in title):
+                        nteams = nba_client.search_teams(home)
+                        if nteams:
+                            nteam_id = nteams[0].get("id")
+                            if nteam_id:
+                                ngames = nba_client.games_on_date(datetime.now(timezone.utc).date(), int(nteam_id))
+                                external_meta["balldontlie_games"] = [g.__dict__ for g in ngames[:1]]
+                    if mma_client and ("UFC" in title or "MMA" in title):
+                        # MMA API does not use team IDs; expose the upcoming events feed best-effort.
+                        try:
+                            mma_events = mma_client._get("/events", params={"dates[]": datetime.now(timezone.utc).date().isoformat()})
+                            external_meta["balldontlie_mma_events"] = (mma_events.get("data") or [])[:1]
+                        except Exception as exc:
+                            external_meta["balldontlie_mma_error"] = str(exc)
                 except Exception as exc:
                     external_meta["sportsdb_error"] = str(exc)
         report = {
