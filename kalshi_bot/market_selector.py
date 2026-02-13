@@ -44,7 +44,7 @@ def _is_sports(settings: BotSettings, m: Dict[str, Any]) -> bool:
 
 def _orderbook_complement(ob: Dict[str, Any]) -> Dict[str, Optional[int]]:
     # Orderbook bids-only; derive asks via complement.
-    # https://docs.kalshi.com/api-reference/markets/get-market-orderbook
+    # https://docs.kalshi.com/getting_started/orderbook_responses
     yes_bids = ob.get("yes", [])
     no_bids = ob.get("no", [])
     best_yes_bid = yes_bids[0][0] if yes_bids else None

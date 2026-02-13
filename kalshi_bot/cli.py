@@ -35,6 +35,7 @@ from .tools.breakeven import breakeven_yes, breakeven_no
 from .rate_limit import RateLimiter, tier_to_limits
 from .risk import RiskManager
 from .strategies.weather_high_temp import run_weather_strategy
+from .automate.learner import run_learn
 from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 
@@ -112,7 +113,7 @@ def markets(
 
 @app.command()
 def watch(
-    market: str = typer.Option(..., help="Market ticker"),
+    market: Optional[str] = typer.Option(None, help="Market ticker"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
     settings = build_settings(config)
@@ -293,7 +294,11 @@ def run_weather(
 ):
     if live:
         demo = False
+    if market is None:
+        raise typer.BadParameter("Market ticker required unless using --lane")
     ensure_demo_or_live(demo, live, i_understand_risk)
+    if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
+        raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
     settings = build_settings(config)
     settings.data.env = "prod" if live else "demo"
     console.print("DEMO MODE" if not live else "LIVE MODE")
@@ -319,6 +324,8 @@ def run_sports(
     if live:
         demo = False
     ensure_demo_or_live(demo, live, i_understand_risk)
+    if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
+        raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
     settings = build_settings(config)
     settings.data.env = "prod" if live else "demo"
     console.print("DEMO MODE" if not live else "LIVE MODE")
@@ -499,6 +506,7 @@ def backtest(
 
 @app.command()
 def run(
+    lane: Optional[str] = typer.Option(None, help="Lane: weather|sports"),
     strategy: str = typer.Option("bayes", help="bayes|consistency|micro"),
     market: str = typer.Option(..., help="Market ticker"),
     demo: bool = typer.Option(True, help="Use demo environment"),
@@ -509,7 +517,23 @@ def run(
     once: bool = typer.Option(False, help="Run single decision cycle"),
     interval: int = typer.Option(10, help="Seconds between cycles"),
 ):
+    if lane:
+        if live:
+            demo = False
+        ensure_demo_or_live(demo, live, i_understand_risk)
+        if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
+            raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
+        if lane == "weather":
+            run_weather(demo=demo, live=live, i_understand_risk=i_understand_risk, config=config, cycles=1, sleep=interval)
+            return
+        if lane == "sports":
+            run_sports(demo=demo, live=live, i_understand_risk=i_understand_risk, config=config, cycles=1, sleep=interval, market=None)
+            return
+        raise typer.BadParameter("lane must be weather or sports")
+
     ensure_demo_or_live(demo, live, i_understand_risk)
+    if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
+        raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
     settings = build_settings(config)
     settings.data.env = "prod" if live else "demo"
 
@@ -687,6 +711,38 @@ def run(
         if once:
             break
         time.sleep(interval)
+
+
+@app.command()
+def learn(
+    lane: str = typer.Option("weather", help="Learning lane (weather only for now)"),
+    demo: bool = typer.Option(True, help="Always demo"),
+    loop: bool = typer.Option(True, help="Run continuously"),
+    interval: int = typer.Option(300, help="Seconds between learn cycles"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    if not demo:
+        raise typer.BadParameter("Learning runs in demo mode only.")
+    settings = build_settings(config)
+    settings.data.env = "demo"
+    _, data_client = build_clients(settings)
+    ledger = Ledger(settings.db_path)
+    audit = AuditLogger(ledger, settings.log_path)
+    run_learn(settings, data_client, ledger, audit, lane=lane, loop=loop, interval_sec=interval)
+
+
+@app.command()
+def report(
+    latest: bool = typer.Option(True, help="Show latest learning summary"),
+):
+    from .living_files import write_operating_rules
+
+    write_operating_rules()
+    path = Path("living_files_kalshi/MEMORY_PACK.json")
+    if not path.exists():
+        console.print("No MEMORY_PACK.json yet.")
+        raise typer.Exit(0)
+    console.print(path.read_text())
 
 
 if __name__ == "__main__":

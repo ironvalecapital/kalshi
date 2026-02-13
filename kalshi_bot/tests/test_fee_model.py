@@ -12,3 +12,9 @@ def test_fee_total_and_per_contract():
     total = fee_total_cents(10, 50, maker=True)
     per = fee_per_contract_cents(10, 50, maker=True)
     assert total >= per
+
+
+def test_fee_maker_taker_gap():
+    maker = fee_cents(10, 50, maker=True)
+    taker = fee_cents(10, 50, maker=False)
+    assert taker >= maker

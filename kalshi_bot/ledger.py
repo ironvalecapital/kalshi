@@ -125,6 +125,24 @@ class Ledger:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS experiments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT,
+                market_ticker TEXT,
+                variant TEXT,
+                params_json TEXT,
+                metrics_json TEXT,
+                pnl REAL,
+                sharpe REAL,
+                max_dd REAL,
+                fill_rate REAL,
+                fee_drag REAL,
+                spread_drag REAL
+            )
+            """
+        )
         self.conn.commit()
 
     def record_tick(self, tick: Dict[str, Any]) -> None:
@@ -294,6 +312,70 @@ class Ledger:
             ),
         )
         self.conn.commit()
+
+    def record_experiment(
+        self,
+        market_ticker: str,
+        variant: str,
+        params: Dict[str, Any],
+        metrics: Dict[str, Any],
+        pnl: float,
+        sharpe: float,
+        max_dd: float,
+        fill_rate: float,
+        fee_drag: float,
+        spread_drag: float,
+    ) -> None:
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO experiments (ts, market_ticker, variant, params_json, metrics_json, pnl, sharpe, max_dd, fill_rate, fee_drag, spread_drag)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now(timezone.utc).isoformat(),
+                market_ticker,
+                variant,
+                json.dumps(params),
+                json.dumps(metrics),
+                pnl,
+                sharpe,
+                max_dd,
+                fill_rate,
+                fee_drag,
+                spread_drag,
+            ),
+        )
+        self.conn.commit()
+
+    def get_recent_experiments(self, limit: int = 200) -> List[Dict[str, Any]]:
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT ts, market_ticker, variant, params_json, metrics_json, pnl, sharpe, max_dd, fill_rate, fee_drag, spread_drag
+            FROM experiments ORDER BY ts DESC LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            results.append(
+                {
+                    "ts": row[0],
+                    "market_ticker": row[1],
+                    "variant": row[2],
+                    "params": json.loads(row[3]) if row[3] else {},
+                    "metrics": json.loads(row[4]) if row[4] else {},
+                    "pnl": row[5],
+                    "sharpe": row[6],
+                    "max_dd": row[7],
+                    "fill_rate": row[8],
+                    "fee_drag": row[9],
+                    "spread_drag": row[10],
+                }
+            )
+        return results
 
     def get_ticks(self, market_id: str, start: str, end: str) -> List[sqlite3.Row]:
         cur = self.conn.cursor()

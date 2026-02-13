@@ -69,6 +69,8 @@ class KalshiRestClient:
                 headers.update(self._auth_headers(method, path))
             resp = self._client.request(method, url, params=params, content=body or None, headers=headers)
             if resp.status_code in (429, 403):
+                # Rate limit/backoff handling, honor Retry-After when present.
+                # https://docs.kalshi.com/getting_started/rate_limits
                 retry_after = None
                 if "Retry-After" in resp.headers:
                     try:

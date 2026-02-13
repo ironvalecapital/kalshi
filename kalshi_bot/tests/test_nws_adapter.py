@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
-import httpx
+import pytest
+
+httpx = pytest.importorskip("httpx")
 
 from kalshi_bot.adapters.nws import NWSClient
 

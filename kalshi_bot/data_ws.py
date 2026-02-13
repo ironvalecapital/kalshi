@@ -57,12 +57,41 @@ class KalshiWSClient:
         self,
         market_tickers: List[str],
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        async with await self._connect() as ws:
-            await self.subscribe(ws, ["orderbook_delta"], market_tickers, sub_id=2)
-            async for raw in ws:
-                data = json.loads(raw)
-                if data.get("type") == "orderbook_delta":
-                    yield data
+        # WebSocket market data channels (ticker/orderbook).
+        # https://docs.kalshi.com/getting_started/quick_start_market_data
+        # https://docs.kalshi.com/api-reference/websockets
+        backoff = 1
+        while True:
+            try:
+                async with await self._connect() as ws:
+                    await self.subscribe(ws, ["orderbook_snapshot", "orderbook_delta"], market_tickers, sub_id=2)
+                    async for raw in ws:
+                        data = json.loads(raw)
+                        if data.get("type") in ("orderbook_snapshot", "orderbook_delta"):
+                            yield data
+            except Exception:
+                await asyncio.sleep(backoff)
+                backoff = min(30, backoff * 2)
+
+    async def stream_ticker_and_book(
+        self,
+        market_tickers: List[str],
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Stream ticker + orderbook updates with reconnect/backoff.
+        """
+        backoff = 1
+        while True:
+            try:
+                async with await self._connect() as ws:
+                    await self.subscribe(ws, ["ticker", "orderbook_snapshot", "orderbook_delta"], market_tickers, sub_id=3)
+                    async for raw in ws:
+                        data = json.loads(raw)
+                        if data.get("type") in ("ticker", "orderbook_snapshot", "orderbook_delta"):
+                            yield data
+            except Exception:
+                await asyncio.sleep(backoff)
+                backoff = min(30, backoff * 2)
 
     async def watch(self, market_ticker: str, callback) -> None:
         async for msg in self.stream_ticker([market_ticker]):

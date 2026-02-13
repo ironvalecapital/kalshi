@@ -24,7 +24,7 @@ class OrderbookState:
 
     def best_yes_ask(self) -> Optional[int]:
         # Orderbook is bids-only; asks are derived via complement.
-        # https://docs.kalshi.com/api-reference/markets/get-market-orderbook
+        # https://docs.kalshi.com/getting_started/orderbook_responses
         best_no = self.best_no_bid()
         return 100 - best_no if best_no is not None else None
 

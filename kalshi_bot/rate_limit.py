@@ -42,6 +42,8 @@ class RateLimiter:
 
 
 def tier_to_limits(tier: str) -> Dict[str, int]:
+    # Kalshi API rate limits by tier.
+    # https://docs.kalshi.com/getting_started/rate_limits
     tier = tier.lower()
     if tier == "basic":
         return {"read": 20, "write": 10, "burst": 40}
