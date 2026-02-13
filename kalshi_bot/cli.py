@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 import json
 import os
 import time
@@ -49,6 +50,19 @@ from .watchlist_server import serve_watchlist
 
 app = typer.Typer(add_completion=False)
 console = Console()
+
+
+def _ticker_family_match(ticker: str, family: str) -> bool:
+    fam = (family or "all").lower().strip()
+    if fam == "all":
+        return True
+    t = (ticker or "").upper()
+    rules = {
+        "sports": ("NBA", "NFL", "NHL", "MLB", "NCAA", "MATCH", "GAME", "SPORT"),
+        "crypto": ("BTC", "ETH", "CRYPTO"),
+        "finance": ("CPI", "FED", "RATE", "INFLATION", "FINANCE", "SPX", "DJIA", "NASDAQ"),
+    }
+    return any(tok in t for tok in rules.get(fam, ()))
 
 
 def build_settings(config_path: Optional[str]) -> BotSettings:
@@ -129,6 +143,70 @@ def markets(
     table.add_column("Status")
     for m in data.get("markets", []):
         table.add_row(m.get("ticker", ""), m.get("title", ""), m.get("status", ""))
+    console.print(table)
+
+
+@app.command()
+def hot_tickers(
+    top: int = typer.Option(20, help="Top N tickers by recent trade count"),
+    limit: int = typer.Option(200, help="Trades page size"),
+    max_pages: int = typer.Option(10, help="Max pages to read"),
+    family: str = typer.Option("all", help="all|sports|crypto|finance"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    family = (family or "all").lower().strip()
+    if family not in {"all", "sports", "crypto", "finance"}:
+        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
+
+    counts: Counter[str] = Counter()
+    cursor: Optional[str] = None
+    pages = 0
+    while pages < max_pages:
+        resp = data_client.get_trades(limit=limit, cursor=cursor)
+        trades = resp.get("trades", []) or []
+        if not trades:
+            break
+        for t in trades:
+            ticker = str(t.get("ticker", "")).upper()
+            if not ticker:
+                continue
+            if not _ticker_family_match(ticker, family):
+                continue
+            if "MULTIGAMEEXTENDED" in ticker or "QUICKSETTLE" in ticker:
+                continue
+            counts[ticker] += 1
+        cursor = resp.get("cursor")
+        pages += 1
+        if not cursor:
+            break
+
+    if not counts:
+        console.print("No traded tickers found for current filters.")
+        raise typer.Exit(0)
+
+    table = Table(title="Hot Tickers (Live Tape)")
+    table.add_column("Ticker")
+    table.add_column("Trades")
+    table.add_column("YesBid")
+    table.add_column("YesAsk")
+    table.add_column("Spread")
+    for ticker, n in counts.most_common(top):
+        m = data_client.get_market(ticker)
+        yes_bid = m.get("yes_bid")
+        no_bid = m.get("no_bid")
+        yes_ask = m.get("yes_ask")
+        if yes_ask is None and no_bid is not None:
+            yes_ask = 100 - no_bid
+        spread = (yes_ask - yes_bid) if yes_ask is not None and yes_bid is not None else None
+        table.add_row(
+            ticker,
+            str(n),
+            "" if yes_bid is None else str(yes_bid),
+            "" if yes_ask is None else str(yes_ask),
+            "" if spread is None else str(spread),
+        )
     console.print(table)
 
 
