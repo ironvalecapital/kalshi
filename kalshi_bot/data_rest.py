@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -57,7 +58,7 @@ class KalshiRestClient:
         json_body: Optional[Dict[str, Any]] = None,
         auth: bool = False,
         is_write: bool = False,
-        retries: int = 3,
+        retries: int = 5,
     ) -> RestResponse:
         attempt = 0
         while True:
@@ -78,7 +79,11 @@ class KalshiRestClient:
                     except ValueError:
                         retry_after = None
                 if resp.status_code == 429 and attempt < retries:
-                    backoff = retry_after if retry_after is not None else min(60, 2 ** attempt)
+                    # Honor Retry-After exactly when provided, add jitter only for computed backoff.
+                    if retry_after is not None:
+                        backoff = retry_after
+                    else:
+                        backoff = min(60, 2 ** attempt) + random.uniform(0.0, 0.5)
                     time.sleep(backoff)
                     attempt += 1
                     continue
@@ -201,22 +206,37 @@ class KalshiDataClient:
         max_close_ts: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> Dict[str, Any]:
-        return self.rest.list_markets(
-            query=query,
-            limit=limit,
-            status=status,
-            series_ticker=series_ticker,
-            event_ticker=event_ticker,
-            min_close_ts=min_close_ts,
-            max_close_ts=max_close_ts,
-            cursor=cursor,
-        )
+        try:
+            return self.rest.list_markets(
+                query=query,
+                limit=limit,
+                status=status,
+                series_ticker=series_ticker,
+                event_ticker=event_ticker,
+                min_close_ts=min_close_ts,
+                max_close_ts=max_close_ts,
+                cursor=cursor,
+            )
+        except KalshiRestError as exc:
+            if exc.status_code in (429, 403):
+                return {"markets": [], "cursor": ""}
+            raise
 
     def get_orderbook(self, ticker: str) -> Dict[str, Any]:
-        return self.rest.get_orderbook(ticker)
+        try:
+            return self.rest.get_orderbook(ticker)
+        except KalshiRestError as exc:
+            if exc.status_code in (429, 403):
+                return {"yes": [], "no": []}
+            raise
 
     def get_market(self, ticker: str) -> Dict[str, Any]:
-        return self.rest.get_market(ticker)
+        try:
+            return self.rest.get_market(ticker)
+        except KalshiRestError as exc:
+            if exc.status_code in (429, 403):
+                return {"ticker": ticker}
+            raise
 
     def get_positions(self) -> Dict[str, Any]:
         return self.rest.get_positions()
@@ -238,4 +258,9 @@ class KalshiDataClient:
         limit: int = 100,
         cursor: Optional[str] = None,
     ) -> Dict[str, Any]:
-        return self.rest.get_trades(ticker=ticker, min_ts=min_ts, max_ts=max_ts, limit=limit, cursor=cursor)
+        try:
+            return self.rest.get_trades(ticker=ticker, min_ts=min_ts, max_ts=max_ts, limit=limit, cursor=cursor)
+        except KalshiRestError as exc:
+            if exc.status_code in (429, 403):
+                return {"trades": [], "cursor": ""}
+            raise
