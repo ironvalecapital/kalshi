@@ -118,12 +118,21 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     def _summary_quotes(m: Dict[str, Any]) -> Dict[str, Optional[int]]:
+        yes_bid = m.get("yes_bid")
+        no_bid = m.get("no_bid")
+        yes_ask = m.get("yes_ask")
+        no_ask = m.get("no_ask")
+        if yes_ask is None and no_bid is not None:
+            yes_ask = 100 - no_bid
+        if no_ask is None and yes_bid is not None:
+            no_ask = 100 - yes_bid
+        spread_yes = (yes_ask - yes_bid) if yes_ask is not None and yes_bid is not None else None
         return {
-            "best_yes_bid": m.get("yes_bid"),
-            "best_yes_ask": m.get("yes_ask"),
-            "best_no_bid": m.get("no_bid"),
-            "best_no_ask": m.get("no_ask"),
-            "spread_yes": (m.get("yes_ask") - m.get("yes_bid")) if m.get("yes_ask") is not None and m.get("yes_bid") is not None else None,
+            "best_yes_bid": yes_bid,
+            "best_yes_ask": yes_ask,
+            "best_no_bid": no_bid,
+            "best_no_ask": no_ask,
+            "spread_yes": spread_yes,
             "depth_top3": 0,
         }
 
@@ -134,15 +143,22 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
         prices = _orderbook_complement(ob)
         if prices["spread_yes"] is None:
             prices = _summary_quotes(m)
-        if prices["spread_yes"] is None:
+        if prices["spread_yes"] is None and prices["best_yes_bid"] is None and prices["best_no_bid"] is None:
             return None
         trades_resp = data_client.get_trades(ticker=m.get("ticker"), limit=200)
         trades = trades_resp.get("trades", [])
         trades_60m = _count_trades(trades, now - timedelta(minutes=60))
         trades_5m = _count_trades(trades, now - timedelta(minutes=5))
-        if prices["depth_top3"] <= 0 and trades_60m <= 0 and trades_5m <= 0:
+        ticker = str(m.get("ticker", "")).upper()
+        if (
+            "MULTIGAMEEXTENDED" in ticker
+            and (prices["spread_yes"] is None or prices["spread_yes"] == 0)
+            and prices["depth_top3"] <= 0
+            and trades_60m <= 0
+        ):
             return None
-        liquidity_score = 1.0 * trades_60m + 0.5 * trades_5m + 0.1 * prices["depth_top3"] - 0.7 * prices["spread_yes"]
+        spread_for_score = prices["spread_yes"] if prices["spread_yes"] is not None else 0
+        liquidity_score = 1.0 * trades_60m + 0.5 * trades_5m + 0.1 * prices["depth_top3"] - 0.7 * spread_for_score
         return SportsCandidate(
             ticker=m.get("ticker"),
             title=m.get("title", ""),
@@ -170,6 +186,26 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
             cand = fut.result()
             if cand is None:
                 continue
+            if "MULTIGAMEEXTENDED" in str(cand.ticker).upper():
+                continue
             candidates.append(cand)
+    if not candidates and getattr(settings.sports, "market_universe", "sports") == "all":
+        fallback_queries = ["BTC", "ETH", "NBA", "NFL", "NCAA", "CPI", "FED", "RATE", "FINANCE"]
+        for q in fallback_queries:
+            try:
+                resp = data_client.list_markets(query=q, status="open", limit=100)
+            except Exception:
+                continue
+            for m in resp.get("markets", []):
+                cand = fetch_one(m)
+                if cand is None:
+                    continue
+                if "MULTIGAMEEXTENDED" in str(cand.ticker).upper():
+                    continue
+                candidates.append(cand)
+                if len(candidates) >= top_n:
+                    break
+            if len(candidates) >= top_n:
+                break
     candidates.sort(key=lambda c: c.liquidity_score, reverse=True)
     return candidates[:top_n]
