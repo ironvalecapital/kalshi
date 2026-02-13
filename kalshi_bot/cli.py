@@ -89,7 +89,20 @@ def doctor(config: Optional[str] = typer.Option(None, help="Path to YAML config"
         console.print("API credentials present")
     try:
         markets = data_client.list_markets(limit=50, status="open")
-        console.print(f"Connectivity: OK (open_markets_sample={len(markets.get('markets', []))})")
+        open_count = len(markets.get("markets", []))
+        if open_count == 0:
+            unopened = data_client.list_markets(limit=50, status="unopened")
+            unopened_count = len(unopened.get("markets", []))
+            if unopened_count > 0:
+                console.print(
+                    f"Connectivity: DEGRADED (open_markets_sample=0, unopened_sample={unopened_count})"
+                )
+            else:
+                console.print(
+                    "Connectivity: DEGRADED (market samples are empty; likely rate-limited or temporary API throttling)"
+                )
+        else:
+            console.print(f"Connectivity: OK (open_markets_sample={open_count})")
     except Exception as exc:
         console.print(f"Connectivity: FAILED ({exc})")
     if settings.api_key_id and settings.private_key_path:
