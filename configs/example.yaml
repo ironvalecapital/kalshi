@@ -62,11 +62,11 @@ weather:
   near_close_min_ev_cents: 0.1
 
 risk:
-  max_daily_loss_usd: 100.0
-  max_position_per_market_usd: 200.0
-  max_open_orders: 10
-  max_order_size_contracts: 20
-  max_notional_usd: 500.0
+  max_daily_loss_usd: 175.0
+  max_position_per_market_usd: 300.0
+  max_open_orders: 20
+  max_order_size_contracts: 30
+  max_notional_usd: 1000.0
   max_trade_freq_per_market_seconds: 10
   cooldown_seconds_after_loss: 300
   max_consecutive_losses: 3
@@ -90,8 +90,9 @@ football_data_api_key: null
 balldontlie_api_key: null
 
 sports:
+  market_universe: "all"
   statuses: ["open", "unopened"]
-  keywords: ["SPORT", "SPORTS", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "GAME", "MATCH", "TEAM"]
+  keywords: ["SPORT", "SPORTS", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "GAME", "MATCH", "TEAM", "CRYPTO", "BTC", "ETH", "FINANCE", "FED", "CPI", "RATE"]
   allowlist: []
   max_spread_cents: 70.0
   min_trades_60m: 0
@@ -102,15 +103,15 @@ sports:
   urgency_window_sec: 300
   min_order_interval_sec: 3
   max_cancels_per_min: 10
-  top_n: 50
+  top_n: 100
   base_size: 1
-  max_order_size: 10
+  max_order_size: 15
   allow_unmatched_markets: true
   yes_longshot_max_cents: 10
   no_tail_min_cents: 90
   maker_only: true
   category_ev_multiplier: 1.25
-  max_scan_markets: 600
+  max_scan_markets: 1000
   markets_cache_ttl_sec: 90
   auto_pick_use_summary: true
   auto_pick_top_n: 100

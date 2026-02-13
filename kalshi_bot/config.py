@@ -165,6 +165,7 @@ class WeatherConfig(BaseModel):
 
 
 class SportsConfig(BaseModel):
+    market_universe: Literal["sports", "all"] = "all"
     keywords: list = [
         "SPORT",
         "SPORTS",
@@ -177,6 +178,13 @@ class SportsConfig(BaseModel):
         "GAME",
         "MATCH",
         "TEAM",
+        "CRYPTO",
+        "BTC",
+        "ETH",
+        "FINANCE",
+        "FED",
+        "CPI",
+        "RATE",
     ]
     allowlist: list = []
     max_spread_cents: float = 70.0
@@ -190,14 +198,14 @@ class SportsConfig(BaseModel):
     max_cancels_per_min: int = 10
     top_n: int = 50
     base_size: int = 1
-    max_order_size: int = 10
+    max_order_size: int = 15
     allow_unmatched_markets: bool = True
     statuses: list = ["open"]
     yes_longshot_max_cents: int = 10
     no_tail_min_cents: int = 90
     maker_only: bool = True
     category_ev_multiplier: float = 1.25
-    max_scan_markets: int = 600
+    max_scan_markets: int = 1000
     markets_cache_ttl_sec: int = 90
     auto_pick_use_summary: bool = True
     auto_pick_top_n: int = 100

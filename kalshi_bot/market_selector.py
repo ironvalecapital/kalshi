@@ -36,6 +36,8 @@ def _close_time(market: Dict[str, Any]) -> Optional[datetime]:
 
 
 def _is_sports(settings: BotSettings, m: Dict[str, Any]) -> bool:
+    if getattr(settings.sports, "market_universe", "sports") == "all":
+        return True
     if settings.sports.allowlist and m.get("ticker") in settings.sports.allowlist:
         return True
     text = " ".join([str(m.get("title", "")), str(m.get("subtitle", "")), str(m.get("series_ticker", ""))]).upper()

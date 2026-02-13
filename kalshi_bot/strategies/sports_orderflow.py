@@ -95,6 +95,14 @@ def _auto_pick_from_summary(settings: BotSettings, data_client: KalshiDataClient
     return None
 
 
+def _has_actionable_quotes(data_client: KalshiDataClient, ticker: str) -> bool:
+    market_info = data_client.get_market(ticker)
+    if market_info.get("yes_bid") is not None or market_info.get("no_bid") is not None:
+        return True
+    ob = data_client.get_orderbook(ticker)
+    return bool(ob.get("yes")) or bool(ob.get("no"))
+
+
 def _pick_best_by_spread(candidates: list) -> Optional[object]:
     if not candidates:
         return None
@@ -164,12 +172,14 @@ def run_sports_strategy(
                         max_spread=settings.sports.spread_scanner_max,
                         status="open",
                     )
-                    if spreads:
-                        pick = type("Pick", (), {"ticker": spreads[0].ticker, "event_ticker": ""})()
+                    for s in spreads:
+                        if _has_actionable_quotes(data_client, s.ticker):
+                            pick = type("Pick", (), {"ticker": s.ticker, "event_ticker": ""})()
+                            break
                 except Exception:
                     pick = None
             auto_ticker = _auto_pick_from_summary(settings, data_client)
-            if auto_ticker and pick is None:
+            if auto_ticker and pick is None and _has_actionable_quotes(data_client, auto_ticker):
                 pick = type("Pick", (), {"ticker": auto_ticker, "event_ticker": ""})()
             if pick is None:
                 candidates = pick_sports_candidates(settings, data_client, top_n=settings.sports.top_n)
@@ -181,7 +191,18 @@ def run_sports_strategy(
                         if cycles <= 0:
                             break
                     continue
-                pick = _pick_best_by_spread(candidates) or candidates[0]
+                for c in sorted(candidates, key=lambda x: x.liquidity_score, reverse=True):
+                    if _has_actionable_quotes(data_client, c.ticker):
+                        pick = c
+                        break
+                if pick is None:
+                    audit.log("decision", "no actionable quote candidates", {})
+                    time.sleep(sleep_s)
+                    if not loop_forever:
+                        cycles -= 1
+                        if cycles <= 0:
+                            break
+                    continue
         live_book = LiveOrderbook(settings, pick.ticker)
         flow = FlowFeatures()
         ob_state: Optional[OrderbookState] = None
