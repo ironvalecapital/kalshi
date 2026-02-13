@@ -258,6 +258,11 @@ class BotSettings(BaseSettings):
     sportsdb_api_key: Optional[str] = Field(default=None, validation_alias="SPORTSDB_API_KEY")
     football_data_api_key: Optional[str] = Field(default=None, validation_alias="FOOTBALL_DATA_API_KEY")
     balldontlie_api_key: Optional[str] = Field(default=None, validation_alias="BALLDONTLIE_API_KEY")
+    worldmonitor_enabled: bool = Field(default=False, validation_alias="WORLDMONITOR_ENABLED")
+    worldmonitor_base_url: Optional[str] = Field(default=None, validation_alias="WORLDMONITOR_BASE_URL")
+    worldmonitor_api_key: Optional[str] = Field(default=None, validation_alias="WORLDMONITOR_API_KEY")
+    worldmonitor_header_name: str = Field(default="X-Api-Key", validation_alias="WORLDMONITOR_HEADER_NAME")
+    worldmonitor_news_path: str = Field(default="/search-news", validation_alias="WORLDMONITOR_NEWS_PATH")
 
     data: DataConfig = DataConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()

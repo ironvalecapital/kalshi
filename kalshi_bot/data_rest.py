@@ -42,7 +42,7 @@ class KalshiRestClient:
         self._private_key = None
         if settings.api_key_id and settings.private_key_path:
             self._private_key = load_private_key(settings.private_key_path)
-        self._client = httpx.Client(timeout=45.0)
+        self._client = httpx.Client(timeout=httpx.Timeout(connect=20.0, read=60.0, write=30.0, pool=30.0))
 
     def _auth_headers(self, method: str, path: str) -> Dict[str, str]:
         if not self.settings.api_key_id or not self._private_key:
@@ -68,7 +68,15 @@ class KalshiRestClient:
             headers = {"Content-Type": "application/json"}
             if auth:
                 headers.update(self._auth_headers(method, path))
-            resp = self._client.request(method, url, params=params, content=body or None, headers=headers)
+            try:
+                resp = self._client.request(method, url, params=params, content=body or None, headers=headers)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if attempt < retries:
+                    backoff = min(30, 2 ** attempt) + random.uniform(0.0, 0.5)
+                    time.sleep(backoff)
+                    attempt += 1
+                    continue
+                raise KalshiRestError(f"Transport timeout/error: {exc}", None)
             if resp.status_code in (429, 403):
                 # Rate limit/backoff handling, honor Retry-After when present.
                 # https://docs.kalshi.com/getting_started/rate_limits
@@ -218,7 +226,7 @@ class KalshiDataClient:
                 cursor=cursor,
             )
         except KalshiRestError as exc:
-            if exc.status_code in (429, 403):
+            if exc.status_code in (429, 403) or exc.status_code is None:
                 return {"markets": [], "cursor": ""}
             raise
 
@@ -226,7 +234,7 @@ class KalshiDataClient:
         try:
             return self.rest.get_orderbook(ticker)
         except KalshiRestError as exc:
-            if exc.status_code in (429, 403):
+            if exc.status_code in (429, 403) or exc.status_code is None:
                 return {"yes": [], "no": []}
             raise
 
@@ -234,7 +242,7 @@ class KalshiDataClient:
         try:
             return self.rest.get_market(ticker)
         except KalshiRestError as exc:
-            if exc.status_code in (429, 403):
+            if exc.status_code in (429, 403) or exc.status_code is None:
                 return {"ticker": ticker}
             raise
 
@@ -261,6 +269,6 @@ class KalshiDataClient:
         try:
             return self.rest.get_trades(ticker=ticker, min_ts=min_ts, max_ts=max_ts, limit=limit, cursor=cursor)
         except KalshiRestError as exc:
-            if exc.status_code in (429, 403):
+            if exc.status_code in (429, 403) or exc.status_code is None:
                 return {"trades": [], "cursor": ""}
             raise
