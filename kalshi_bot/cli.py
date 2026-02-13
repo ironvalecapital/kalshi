@@ -36,6 +36,7 @@ from .rate_limit import RateLimiter, tier_to_limits
 from .risk import RiskManager
 from .strategies.weather_high_temp import run_weather_strategy
 from .automate.learner import run_learn
+from .spread_scanner import scan_spreads
 from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 
@@ -743,6 +744,36 @@ def report(
         console.print("No MEMORY_PACK.json yet.")
         raise typer.Exit(0)
     console.print(path.read_text())
+
+
+@app.command()
+def scan_spreads(
+    top: int = typer.Option(20, help="Top N"),
+    min_spread: int = typer.Option(2, help="Min spread (cents)"),
+    max_spread: int = typer.Option(30, help="Max spread (cents)"),
+    status: str = typer.Option("open", help="Market status"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    items = scan_spreads(settings, data_client, top=top, min_spread=min_spread, max_spread=max_spread, status=status)
+    table = Table(title="Spread Scanner")
+    table.add_column("Ticker")
+    table.add_column("Spread")
+    table.add_column("YesBid")
+    table.add_column("YesAsk")
+    table.add_column("DepthTop3")
+    table.add_column("Volume24h")
+    for c in items:
+        table.add_row(
+            c.ticker,
+            str(c.spread_yes),
+            str(c.yes_bid),
+            str(c.yes_ask),
+            str(c.depth_top3),
+            f"{c.volume_24h:.0f}",
+        )
+    console.print(table)
 
 
 if __name__ == "__main__":
