@@ -208,12 +208,12 @@ class SportsConfig(BaseModel):
     avoid_price_low_cents: int = 2
     avoid_price_high_cents: int = 98
     depth_size_divisor: int = 5
-    min_arb_depth: int = 10
+    min_arb_depth: int = 1
     allow_arb_taker: bool = True
     spread_scan_weight: float = 1.0
     simple_active_maker: bool = True
     simple_min_spread_cents: int = 0
-    simple_imbalance_min: float = 0.03
+    simple_imbalance_min: float = 0.0
     simple_ladder_levels: int = 3
     use_spread_scanner: bool = True
     spread_scanner_min: int = 2

@@ -121,12 +121,12 @@ sports:
   avoid_price_low_cents: 2
   avoid_price_high_cents: 98
   depth_size_divisor: 5
-  min_arb_depth: 10
+  min_arb_depth: 1
   allow_arb_taker: true
   spread_scan_weight: 1.0
   simple_active_maker: true
   simple_min_spread_cents: 0
-  simple_imbalance_min: 0.03
+  simple_imbalance_min: 0.0
   simple_ladder_levels: 3
   use_spread_scanner: true
   spread_scanner_min: 0
