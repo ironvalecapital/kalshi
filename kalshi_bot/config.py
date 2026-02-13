@@ -196,7 +196,7 @@ class SportsConfig(BaseModel):
     urgency_window_sec: int = 300
     min_order_interval_sec: int = 3
     max_cancels_per_min: int = 10
-    top_n: int = 50
+    top_n: int = 120
     base_size: int = 1
     max_order_size: int = 15
     allow_unmatched_markets: bool = True
@@ -208,7 +208,7 @@ class SportsConfig(BaseModel):
     max_scan_markets: int = 1000
     markets_cache_ttl_sec: int = 90
     auto_pick_use_summary: bool = True
-    auto_pick_top_n: int = 100
+    auto_pick_top_n: int = 300
     daily_report_interval_sec: int = 3600
     stale_order_max_age_sec: int = 300
     stale_order_cancel_edge_cents: float = 0.1

@@ -88,7 +88,7 @@ def doctor(config: Optional[str] = typer.Option(None, help="Path to YAML config"
     else:
         console.print("API credentials present")
     try:
-        markets = data_client.list_markets(limit=100, status="open")
+        markets = data_client.list_markets(limit=500, status="open")
         console.print(f"Connectivity: OK (open_markets_sample={len(markets.get('markets', []))})")
     except Exception as exc:
         console.print(f"Connectivity: FAILED ({exc})")
