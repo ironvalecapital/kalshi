@@ -138,3 +138,7 @@ sports:
   use_spread_scanner: true
   spread_scanner_min: 0
   spread_scanner_max: 99
+  enable_exit_rules: true
+  exit_edge_cents: -0.25
+  stop_loss_edge_cents: -2.5
+  exit_time_to_close_min: 20

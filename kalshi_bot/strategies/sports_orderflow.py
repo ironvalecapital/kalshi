@@ -113,6 +113,31 @@ def _pick_best_by_spread(candidates: list) -> Optional[object]:
     return max(candidates, key=score)
 
 
+def _position_counts(data_client: KalshiDataClient, ticker: str) -> tuple[int, int]:
+    try:
+        resp = data_client.get_positions()
+    except Exception:
+        return 0, 0
+    positions = resp.get("positions", []) if isinstance(resp, dict) else []
+    yes_count = 0
+    no_count = 0
+    for p in positions:
+        pt = str(p.get("ticker") or p.get("market_ticker") or "")
+        if pt != ticker:
+            continue
+        if "yes_count" in p:
+            yes_count += int(p.get("yes_count") or 0)
+        if "no_count" in p:
+            no_count += int(p.get("no_count") or 0)
+        side = str(p.get("side") or "").lower()
+        count = int(p.get("count") or p.get("position") or 0)
+        if side == "yes":
+            yes_count += max(0, count)
+        if side == "no":
+            no_count += max(0, count)
+    return yes_count, no_count
+
+
 def run_sports_strategy(
     settings: BotSettings,
     data_client: KalshiDataClient,
@@ -317,6 +342,21 @@ def run_sports_strategy(
 
         fill_prob = _fill_prob(depth, spread, trades_5m / 5.0)
         action = "ABSTAIN"
+        yes_pos, no_pos = _position_counts(data_client, pick.ticker)
+        market_meta = data_client.get_market(pick.ticker)
+        close_raw = market_meta.get("close_time") or market_meta.get("close_ts")
+        close_min = None
+        if close_raw is not None:
+            try:
+                if isinstance(close_raw, (int, float)):
+                    close_dt = datetime.fromtimestamp(float(close_raw), tz=timezone.utc)
+                else:
+                    close_dt = date_parser.parse(str(close_raw).replace("Z", "+00:00"))
+                    if close_dt.tzinfo is None:
+                        close_dt = close_dt.replace(tzinfo=timezone.utc)
+                close_min = (close_dt - now).total_seconds() / 60.0
+            except Exception:
+                close_min = None
         min_ev = settings.sports.min_ev_cents
         # Category gating: higher EV threshold for sports/entertainment/media-like categories.
         if pick.event_ticker:
@@ -340,6 +380,20 @@ def run_sports_strategy(
         else:
             if ev_after >= min_ev and spread <= settings.sports.max_spread_cents and fill_prob > 0.1:
                 action = "BID_YES" if edge_cents >= 0 else "BID_NO"
+
+        # Exit logic: reduce positions on edge decay, stop-loss, or near expiration.
+        if settings.sports.enable_exit_rules:
+            no_edge_cents = ((1.0 - p_next) - ((no_ask / 100.0) if no_ask is not None else (1.0 - implied_yes))) * 100.0
+            if yes_pos > 0:
+                if edge_cents <= settings.sports.stop_loss_edge_cents or edge_cents <= settings.sports.exit_edge_cents:
+                    action = "SELL_YES"
+                if close_min is not None and close_min <= settings.sports.exit_time_to_close_min and edge_cents <= 0:
+                    action = "SELL_YES"
+            elif no_pos > 0:
+                if no_edge_cents <= settings.sports.stop_loss_edge_cents or no_edge_cents <= settings.sports.exit_edge_cents:
+                    action = "SELL_NO"
+                if close_min is not None and close_min <= settings.sports.exit_time_to_close_min and no_edge_cents <= 0:
+                    action = "SELL_NO"
 
         # Near-resolved filter: avoid extreme tails.
         if yes_ask is not None and (yes_ask <= settings.sports.avoid_price_low_cents or yes_ask >= settings.sports.avoid_price_high_cents):
@@ -424,6 +478,49 @@ def run_sports_strategy(
                         order_result = {"status": "rejected", "reason": "no_ladder_orders"}
                 else:
                     order_result = {"status": "rejected", "reason": reason}
+        elif action in ("SELL_YES", "SELL_NO"):
+            if action == "SELL_YES":
+                if yes_pos <= 0:
+                    order_result = {"status": "rejected", "reason": "no_yes_position"}
+                else:
+                    size = min(yes_pos, settings.sports.max_order_size)
+                    if yes_bid is None:
+                        order_result = {"status": "rejected", "reason": "no_yes_bid"}
+                    else:
+                        sell_price = yes_bid + 1 if settings.sports.maker_only else yes_bid
+                        if yes_ask is not None:
+                            sell_price = min(sell_price, max(yes_bid + 1, yes_ask - 1))
+                        sell_price = max(1, min(99, sell_price))
+                        order = OrderRequest(
+                            market_id=pick.ticker,
+                            side="yes",
+                            action="sell",
+                            price_cents=sell_price,
+                            count=size,
+                            client_order_id=f"sports-sell-{int(time.time())}",
+                        )
+                        order_result = exec_engine.place_order(order)
+            else:
+                if no_pos <= 0:
+                    order_result = {"status": "rejected", "reason": "no_no_position"}
+                else:
+                    size = min(no_pos, settings.sports.max_order_size)
+                    if no_bid is None:
+                        order_result = {"status": "rejected", "reason": "no_no_bid"}
+                    else:
+                        sell_price = no_bid + 1 if settings.sports.maker_only else no_bid
+                        if no_ask is not None:
+                            sell_price = min(sell_price, max(no_bid + 1, no_ask - 1))
+                        sell_price = max(1, min(99, sell_price))
+                        order = OrderRequest(
+                            market_id=pick.ticker,
+                            side="no",
+                            action="sell",
+                            price_cents=sell_price,
+                            count=size,
+                            client_order_id=f"sports-sell-{int(time.time())}",
+                        )
+                        order_result = exec_engine.place_order(order)
 
         external_meta: Dict[str, Any] = {}
         if (sportsdb_client or football_client or nba_client) and pick.title:
@@ -529,6 +626,9 @@ def run_sports_strategy(
             "fees": {"fee_cents": fee, "maker": True},
             "fill_prob": fill_prob,
             "action": action,
+            "position_yes": yes_pos,
+            "position_no": no_pos,
+            "minutes_to_close": close_min,
             "order_result": order_result,
             "external": external_meta,
         }

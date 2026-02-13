@@ -233,6 +233,10 @@ class SportsConfig(BaseModel):
     use_spread_scanner: bool = True
     spread_scanner_min: int = 2
     spread_scanner_max: int = 30
+    enable_exit_rules: bool = True
+    exit_edge_cents: float = -0.25
+    stop_loss_edge_cents: float = -2.5
+    exit_time_to_close_min: int = 20
 
 
 class BotSettings(BaseSettings):
