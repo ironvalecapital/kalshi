@@ -58,7 +58,7 @@ class WeatherConfig(BaseModel):
     min_time_to_close_hours: float = 0.5
     max_time_to_close_hours: float = 168.0
     use_close_window: bool = False
-    statuses: list = ["open", "initialized"]
+    statuses: list = ["open"]
     w_trades: float = 1.0
     w_volume: float = 0.1
     w_spread: float = 0.05
@@ -191,7 +191,7 @@ class SportsConfig(BaseModel):
     base_size: int = 1
     max_order_size: int = 10
     allow_unmatched_markets: bool = True
-    statuses: list = ["open", "initialized"]
+    statuses: list = ["open"]
     yes_longshot_max_cents: int = 10
     no_tail_min_cents: int = 90
     maker_only: bool = True

@@ -13,7 +13,7 @@ rate_limit:
   tier: basic
 
 weather:
-  statuses: ["open"]
+  statuses: ["open", "initialized"]
   forecast_sigma_f: 2.0
   min_fill_prob: 0.001
   max_spread_cents: 99.0
@@ -89,7 +89,7 @@ football_data_api_key: null
 balldontlie_api_key: null
 
 sports:
-  statuses: ["open"]
+  statuses: ["open", "initialized"]
   keywords: ["SPORT", "SPORTS", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "GAME", "MATCH", "TEAM"]
   allowlist: []
   max_spread_cents: 70.0
