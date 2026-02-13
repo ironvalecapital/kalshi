@@ -268,6 +268,8 @@ class BotSettings(BaseSettings):
     worldmonitor_api_key: Optional[str] = Field(default=None, validation_alias="WORLDMONITOR_API_KEY")
     worldmonitor_header_name: str = Field(default="X-Api-Key", validation_alias="WORLDMONITOR_HEADER_NAME")
     worldmonitor_news_path: str = Field(default="/search-news", validation_alias="WORLDMONITOR_NEWS_PATH")
+    polygon_api_key: Optional[str] = Field(default=None, validation_alias="POLYGON_API_KEY")
+    polygon_base_url: str = Field(default="https://api.polygon.io", validation_alias="POLYGON_BASE_URL")
 
     data: DataConfig = DataConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()

@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import socket
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import websockets
+from websockets.exceptions import InvalidStatus
 
 from .auth import build_auth_headers, load_private_key
 from .config import BotSettings, ws_url
@@ -67,18 +71,27 @@ class LiveOrderbook:
             return None
         return build_auth_headers(self.settings.api_key_id, self._private_key, "GET", "/trade-api/ws/v2")
 
+    def _resolved_ws_url(self) -> str:
+        configured = ws_url(self.settings)
+        if configured and configured.startswith(("ws://", "wss://")):
+            return configured
+        if self.settings.data.env == "prod":
+            return "wss://api.elections.kalshi.com/trade-api/ws/v2"
+        return "wss://demo-api.kalshi.co/trade-api/ws/v2"
+
     async def _connect(self):
         headers = self._headers()
+        target = self._resolved_ws_url()
         if headers:
             return await websockets.connect(
-                ws_url(self.settings),
+                target,
                 additional_headers=headers,
                 ping_interval=20,
                 ping_timeout=20,
                 open_timeout=self.settings.data.ws_open_timeout_sec,
             )
         return await websockets.connect(
-            ws_url(self.settings),
+            target,
             ping_interval=20,
             ping_timeout=20,
             open_timeout=self.settings.data.ws_open_timeout_sec,
@@ -119,17 +132,37 @@ class LiveOrderbook:
             book[price] = size
 
     async def run(self, on_update) -> None:
-        async with await self._connect() as ws:
-            await self.subscribe(ws)
-            async for raw in ws:
-                data = json.loads(raw)
-                if data.get("type") == "orderbook_snapshot":
-                    self.apply_snapshot(data)
-                    result = on_update(self.state)
-                    if asyncio.iscoroutine(result):
-                        await result
-                if data.get("type") == "orderbook_delta":
-                    self.apply_delta(data)
-                    result = on_update(self.state)
-                    if asyncio.iscoroutine(result):
-                        await result
+        backoff = 1.0
+        while True:
+            try:
+                async with await self._connect() as ws:
+                    backoff = 1.0
+                    await self.subscribe(ws)
+                    async for raw in ws:
+                        data = json.loads(raw)
+                        if data.get("type") == "orderbook_snapshot":
+                            self.apply_snapshot(data)
+                            result = on_update(self.state)
+                            if asyncio.iscoroutine(result):
+                                await result
+                        if data.get("type") == "orderbook_delta":
+                            self.apply_delta(data)
+                            result = on_update(self.state)
+                            if asyncio.iscoroutine(result):
+                                await result
+            except InvalidStatus as exc:
+                # Handle 429/5xx burst rejects by reconnecting with jittered backoff.
+                status = getattr(exc, "status_code", None)
+                if status == 429:
+                    time.sleep(min(30.0, backoff) + random.uniform(0.0, 0.5))
+                    backoff = min(30.0, backoff * 2.0)
+                    continue
+                time.sleep(min(30.0, backoff))
+                backoff = min(30.0, backoff * 2.0)
+            except (socket.gaierror, OSError, TimeoutError):
+                # DNS and transient network errors should not crash the loop.
+                time.sleep(min(30.0, backoff) + random.uniform(0.0, 0.5))
+                backoff = min(30.0, backoff * 2.0)
+            except Exception:
+                time.sleep(min(30.0, backoff))
+                backoff = min(30.0, backoff * 2.0)
