@@ -182,6 +182,9 @@ def pick_sports(
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
     settings = build_settings(config)
+    # Keep interactive picker fast under rate limits.
+    settings.sports.orderbook_probe_limit = min(settings.sports.orderbook_probe_limit, max(20, top * 2))
+    settings.sports.selector_workers = 1
     _, data_client = build_clients(settings)
     candidates = pick_sports_candidates(settings, data_client, top_n=top)
     if not candidates:

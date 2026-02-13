@@ -197,11 +197,27 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
             except Exception:
                 continue
             for m in resp.get("markets", []):
-                cand = fetch_one(m)
-                if cand is None:
+                if "MULTIGAMEEXTENDED" in str(m.get("ticker", "")).upper():
                     continue
-                if "MULTIGAMEEXTENDED" in str(cand.ticker).upper():
+                quotes = _summary_quotes(m)
+                if quotes["best_yes_bid"] is None and quotes["best_no_bid"] is None:
                     continue
+                spread_for_score = quotes["spread_yes"] if quotes["spread_yes"] is not None else 0
+                cand = SportsCandidate(
+                    ticker=m.get("ticker"),
+                    title=m.get("title", ""),
+                    event_ticker=m.get("event_ticker", "") or m.get("event_id", "") or "",
+                    close_time=_close_time(m),
+                    best_yes_bid=quotes["best_yes_bid"],
+                    best_yes_ask=quotes["best_yes_ask"],
+                    best_no_bid=quotes["best_no_bid"],
+                    best_no_ask=quotes["best_no_ask"],
+                    spread_yes=quotes["spread_yes"],
+                    trades_60m=0,
+                    trades_5m=0,
+                    depth_top3=0,
+                    liquidity_score=-0.7 * spread_for_score,
+                )
                 candidates.append(cand)
                 if len(candidates) >= top_n:
                     break
