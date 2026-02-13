@@ -66,6 +66,15 @@ def _ticker_family_match(ticker: str, family: str) -> bool:
     return any(tok in t for tok in rules.get(fam, ()))
 
 
+def _normalize_family(family: str) -> str:
+    fam = (family or "all").lower().strip()
+    if fam == "auto":
+        return "all"
+    if fam not in {"all", "sports", "crypto", "finance"}:
+        raise typer.BadParameter("--family must be one of: auto, all, sports, crypto, finance")
+    return fam
+
+
 def _queue_fill_prob(queue_ahead: int, trades_5m: int, spread: float, horizon_sec: int = 60) -> float:
     trade_rate_sec = max(0.0, float(trades_5m) / 300.0)
     aggressiveness = max(0.2, 1.4 - 0.08 * max(0.0, float(spread)))
@@ -160,14 +169,12 @@ def hot_tickers(
     top: int = typer.Option(20, help="Top N tickers by recent trade count"),
     limit: int = typer.Option(200, help="Trades page size"),
     max_pages: int = typer.Option(10, help="Max pages to read"),
-    family: str = typer.Option("all", help="all|sports|crypto|finance"),
+    family: str = typer.Option("auto", help="auto|all|sports|crypto|finance"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
     settings = build_settings(config)
     _, data_client = build_clients(settings)
-    family = (family or "all").lower().strip()
-    if family not in {"all", "sports", "crypto", "finance"}:
-        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
+    family = _normalize_family(family)
 
     counts: Counter[str] = Counter()
     cursor: Optional[str] = None
@@ -224,15 +231,13 @@ def hot_edge(
     top: int = typer.Option(20, help="Top N edge-ranked tickers from live tape"),
     limit: int = typer.Option(300, help="Trades page size"),
     max_pages: int = typer.Option(8, help="Max pages to read"),
-    family: str = typer.Option("all", help="all|sports|crypto|finance"),
+    family: str = typer.Option("auto", help="auto|all|sports|crypto|finance"),
     count: int = typer.Option(5, help="Contracts for fee/EV estimation"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
     settings = build_settings(config)
     _, data_client = build_clients(settings)
-    family = (family or "all").lower().strip()
-    if family not in {"all", "sports", "crypto", "finance"}:
-        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
+    family = _normalize_family(family)
 
     # Gather a recent tape window once.
     tape: list[dict] = []
@@ -408,7 +413,7 @@ def pick_weather(
 @app.command()
 def pick_sports(
     top: int = typer.Option(20, help="Top N"),
-    family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
+    family: str = typer.Option("auto", help="Market family: auto|all|sports|crypto|finance"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
     settings = build_settings(config)
@@ -416,9 +421,7 @@ def pick_sports(
     settings.sports.orderbook_probe_limit = min(settings.sports.orderbook_probe_limit, max(20, top * 2))
     settings.sports.selector_workers = 1
     _, data_client = build_clients(settings)
-    family = (family or "all").lower().strip()
-    if family not in {"all", "sports", "crypto", "finance"}:
-        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
+    family = _normalize_family(family)
     candidates = pick_sports_candidates(settings, data_client, top_n=top, family=family)
     if not candidates:
         console.print("No suitable sports markets found.")
@@ -436,7 +439,7 @@ def pick_sports(
 @app.command()
 def pick_markets(
     top: int = typer.Option(30, help="Top N"),
-    family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
+    family: str = typer.Option("auto", help="Market family: auto|all|sports|crypto|finance"),
     include_excluded: bool = typer.Option(False, help="Include excluded/family-mismatch rows"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
@@ -553,7 +556,7 @@ def watchlist_server(
 @app.command()
 def watch_flow(
     market: str = typer.Option(..., help="Market ticker"),
-    family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
+    family: str = typer.Option("auto", help="Market family: auto|all|sports|crypto|finance"),
     poll_sec: int = typer.Option(2, help="Polling seconds"),
     auto_rotate: bool = typer.Option(True, help="Rotate to next hot ticker if no quotes"),
     rotate_after_empty: int = typer.Option(8, help="Rotate after N empty polls"),
@@ -561,9 +564,7 @@ def watch_flow(
 ):
     settings = build_settings(config)
     _, data_client = build_clients(settings)
-    family = (family or "all").lower().strip()
-    if family not in {"all", "sports", "crypto", "finance"}:
-        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
+    family = _normalize_family(family)
     flow = FlowFeatures()
     current_market = market
     empty_polls = 0
@@ -679,7 +680,7 @@ def run_sports(
     sleep: int = typer.Option(10, help="Seconds between cycles"),
     market: Optional[str] = typer.Option(None, help="Override market ticker"),
     markets: Optional[str] = typer.Option(None, help="Comma-separated market tickers to run in rotation"),
-    family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
+    family: str = typer.Option("auto", help="Market family: auto|all|sports|crypto|finance"),
 ):
     if live:
         demo = False
@@ -687,9 +688,7 @@ def run_sports(
     if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
         raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
     settings = build_settings(config)
-    family = (family or "all").lower().strip()
-    if family not in {"all", "sports", "crypto", "finance"}:
-        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
+    family = _normalize_family(family)
     market_list = [t.strip() for t in (markets or "").split(",") if t.strip()]
     if market and market not in market_list:
         market_list.append(market)
