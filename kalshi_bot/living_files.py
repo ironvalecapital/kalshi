@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 @dataclass
 class MemoryPack:
     updated_at: str
+    lane: str
     top_markets: List[str]
     chosen_variant: str
     thresholds: Dict[str, Any]
@@ -53,6 +54,7 @@ def update_playbook_weather(thresholds: Dict[str, Any]) -> None:
 
 
 def write_memory_pack(
+    lane: str,
     top_markets: List[str],
     chosen_variant: str,
     thresholds: Dict[str, Any],
@@ -61,6 +63,7 @@ def write_memory_pack(
 ) -> None:
     pack = MemoryPack(
         updated_at=datetime.now(timezone.utc).isoformat(),
+        lane=lane,
         top_markets=top_markets,
         chosen_variant=chosen_variant,
         thresholds=thresholds,
@@ -70,6 +73,13 @@ def write_memory_pack(
     path = _base_dir() / "MEMORY_PACK.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(pack), indent=2))
+
+
+def read_memory_pack() -> Dict[str, Any]:
+    path = _base_dir() / "MEMORY_PACK.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
 
 
 def write_live_flag(ok: bool, metrics: Dict[str, Any]) -> None:

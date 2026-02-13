@@ -11,6 +11,8 @@ from ..decision_report import write_decision_report
 from ..ev import estimate_fee_cents, ev_buy_yes_cents, ev_buy_no_cents, fill_probability, spread_penalty_cents
 from ..ledger import Ledger
 from ..living_files import append_known_failure, update_playbook_weather, write_memory_pack, write_live_flag, write_operating_rules
+from ..market_selector import pick_sports_candidates
+from ..fee_model import fee_cents
 from ..market_picker import pick_weather_candidates
 from ..strategies.weather_high_temp import resolve_market_mapping
 from ..adapters.nws import NWSClient, compute_daily_high_distribution
@@ -94,18 +96,20 @@ def run_learn(
     loop: bool,
     interval_sec: int,
 ) -> None:
-    if lane != "weather":
-        raise ValueError("learn only supports weather lane for now")
     write_operating_rules()
     nws = None
-    try:
-        nws = NWSClient(user_agent=settings.weather_user_agent)
-    except Exception as exc:
-        append_known_failure(f"NWS init failed: {exc}")
+    if lane == "weather":
+        try:
+            nws = NWSClient(user_agent=settings.weather_user_agent)
+        except Exception as exc:
+            append_known_failure(f"NWS init failed: {exc}")
 
     while True:
         try:
-            candidates = pick_weather_candidates(settings, data_client, top_n=settings.weather.top_n)
+            if lane == "weather":
+                candidates = pick_weather_candidates(settings, data_client, top_n=settings.weather.top_n)
+            else:
+                candidates = pick_sports_candidates(settings, data_client, top_n=settings.sports.top_n)
             if not candidates:
                 audit.log("learn", "no candidates", {})
                 time.sleep(interval_sec)
@@ -114,51 +118,97 @@ def run_learn(
                 continue
             results_rows = []
             top_markets = []
-            for cand in candidates[: settings.weather.max_trades_per_cycle]:
-                market = data_client.get_market(cand.ticker)
-                mapping = resolve_market_mapping(settings, market, settings.weather.market_overrides or {})
+            max_cycles = settings.weather.max_trades_per_cycle if lane == "weather" else settings.sports.top_n
+            for cand in candidates[: max_cycles]:
                 top_markets.append(cand.ticker)
-                for res in evaluate_variants(settings, cand, nws, mapping):
-                    metrics = {
-                        "implied": res.implied,
-                        "p_hat": res.p_hat,
-                        "ev_yes": res.ev_yes,
-                        "ev_no": res.ev_no,
-                        "fill_rate": res.fill_prob,
-                        "sharpe": res.ev_yes / max(0.01, abs(res.ev_no)),
-                        "max_dd": min(0.0, res.ev_yes),
-                    }
-                    ledger.record_experiment(
-                        cand.ticker,
-                        res.variant,
-                        {"lane": lane},
-                        metrics,
-                        pnl=max(res.ev_yes, res.ev_no),
-                        sharpe=metrics["sharpe"],
-                        max_dd=metrics["max_dd"],
-                        fill_rate=res.fill_prob,
-                        fee_drag=0.0,
-                        spread_drag=cand.spread_yes or 0.0,
-                    )
-                    results_rows.append(
-                        {
-                            "variant": res.variant,
-                            "pnl": max(res.ev_yes, res.ev_no),
+                if lane == "weather":
+                    market = data_client.get_market(cand.ticker)
+                    mapping = resolve_market_mapping(settings, market, settings.weather.market_overrides or {})
+                    for res in evaluate_variants(settings, cand, nws, mapping):
+                        metrics = {
+                            "implied": res.implied,
+                            "p_hat": res.p_hat,
+                            "ev_yes": res.ev_yes,
+                            "ev_no": res.ev_no,
                             "fill_rate": res.fill_prob,
-                            "sharpe": metrics["sharpe"],
-                            "max_dd": metrics["max_dd"],
+                            "sharpe": res.ev_yes / max(0.01, abs(res.ev_no)),
+                            "max_dd": min(0.0, res.ev_yes),
                         }
-                    )
+                        ledger.record_experiment(
+                            cand.ticker,
+                            res.variant,
+                            {"lane": lane},
+                            metrics,
+                            pnl=max(res.ev_yes, res.ev_no),
+                            sharpe=metrics["sharpe"],
+                            max_dd=metrics["max_dd"],
+                            fill_rate=res.fill_prob,
+                            fee_drag=0.0,
+                            spread_drag=cand.spread_yes or 0.0,
+                        )
+                        results_rows.append(
+                            {
+                                "variant": res.variant,
+                                "pnl": max(res.ev_yes, res.ev_no),
+                                "fill_rate": res.fill_prob,
+                                "sharpe": metrics["sharpe"],
+                                "max_dd": metrics["max_dd"],
+                            }
+                        )
+                else:
+                    yes_ask = cand.best_yes_ask or 50
+                    implied = (cand.best_yes_bid + yes_ask) / 200.0 if cand.best_yes_bid is not None else 0.5
+                    # Variant A: spread capture maker
+                    fee = fee_cents(1, yes_ask, maker=True)
+                    ev_spread = max(0.0, (cand.spread_yes or 0) / 2.0 - fee)
+                    # Variant B: imbalance tilt
+                    imbalance = 0.0
+                    if cand.depth_top3:
+                        imbalance = 0.1
+                    ev_imbalance = ev_spread + (0.5 if imbalance > 0 else 0.0)
+                    for name, ev in [("spread_maker", ev_spread), ("imbalance_maker", ev_imbalance)]:
+                        metrics = {
+                            "implied": implied,
+                            "p_hat": implied,
+                            "ev_yes": ev,
+                            "ev_no": -ev,
+                            "fill_rate": 0.2,
+                            "sharpe": ev / 0.01,
+                            "max_dd": min(0.0, ev),
+                        }
+                        ledger.record_experiment(
+                            cand.ticker,
+                            name,
+                            {"lane": lane},
+                            metrics,
+                            pnl=ev,
+                            sharpe=metrics["sharpe"],
+                            max_dd=metrics["max_dd"],
+                            fill_rate=metrics["fill_rate"],
+                            fee_drag=fee,
+                            spread_drag=cand.spread_yes or 0.0,
+                        )
+                        results_rows.append(
+                            {
+                                "variant": name,
+                                "pnl": ev,
+                                "fill_rate": metrics["fill_rate"],
+                                "sharpe": metrics["sharpe"],
+                                "max_dd": metrics["max_dd"],
+                            }
+                        )
                 write_decision_report(settings, {"lane": lane, "market": cand.ticker, "ts": datetime.now(timezone.utc).isoformat()})
 
             champion, metrics = select_champion(results_rows)
             thresholds = {
-                "entry_edge_pp": settings.weather.entry_edge_pp,
-                "min_edge_after_fees_cents": settings.weather.min_edge_after_fees_cents,
-                "max_spread_cents": settings.weather.max_spread_cents,
+                "entry_edge_pp": settings.weather.entry_edge_pp if lane == "weather" else None,
+                "min_edge_after_fees_cents": settings.weather.min_edge_after_fees_cents if lane == "weather" else None,
+                "max_spread_cents": settings.weather.max_spread_cents if lane == "weather" else settings.sports.max_spread_cents,
             }
-            update_playbook_weather(thresholds)
+            if lane == "weather":
+                update_playbook_weather(thresholds)
             write_memory_pack(
+                lane=lane,
                 top_markets=top_markets,
                 chosen_variant=champion,
                 thresholds=thresholds,

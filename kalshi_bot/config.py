@@ -50,10 +50,10 @@ class DataConfig(BaseModel):
 
 class WeatherConfig(BaseModel):
     forecast_sigma_f: float = 2.0
-    min_fill_prob: float = 0.005
-    max_spread_cents: float = 80.0
-    min_edge_after_fees_cents: float = 0.01
-    entry_edge_pp: float = 5.0
+    min_fill_prob: float = 0.003
+    max_spread_cents: float = 95.0
+    min_edge_after_fees_cents: float = 0.0
+    entry_edge_pp: float = 3.0
     exit_edge_pp: float = 45.0
     min_time_to_close_hours: float = 0.5
     max_time_to_close_hours: float = 168.0

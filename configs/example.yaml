@@ -15,10 +15,10 @@ rate_limit:
 weather:
   statuses: ["open"]
   forecast_sigma_f: 2.0
-  min_fill_prob: 0.005
-  max_spread_cents: 80.0
-  min_edge_after_fees_cents: 0.01
-  entry_edge_pp: 5.0
+  min_fill_prob: 0.003
+  max_spread_cents: 95.0
+  min_edge_after_fees_cents: 0.0
+  entry_edge_pp: 3.0
   exit_edge_pp: 45.0
   min_time_to_close_hours: 0.5
   max_time_to_close_hours: 168.0
