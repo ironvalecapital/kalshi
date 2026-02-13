@@ -214,6 +214,9 @@ class SportsConfig(BaseModel):
     simple_min_spread_cents: int = 1
     simple_imbalance_min: float = 0.03
     simple_ladder_levels: int = 3
+    use_spread_scanner: bool = True
+    spread_scanner_min: int = 2
+    spread_scanner_max: int = 30
 
 
 class BotSettings(BaseSettings):

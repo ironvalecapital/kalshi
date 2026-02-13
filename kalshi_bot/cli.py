@@ -36,7 +36,7 @@ from .rate_limit import RateLimiter, tier_to_limits
 from .risk import RiskManager
 from .strategies.weather_high_temp import run_weather_strategy
 from .automate.learner import run_learn
-from .spread_scanner import scan_spreads
+from .spread_scanner import scan_spreads as scan_spreads_fn
 from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 
@@ -747,7 +747,7 @@ def report(
 
 
 @app.command()
-def scan_spreads(
+def scan_spreads_cmd(
     top: int = typer.Option(20, help="Top N"),
     min_spread: int = typer.Option(2, help="Min spread (cents)"),
     max_spread: int = typer.Option(30, help="Max spread (cents)"),
@@ -756,7 +756,7 @@ def scan_spreads(
 ):
     settings = build_settings(config)
     _, data_client = build_clients(settings)
-    items = scan_spreads(settings, data_client, top=top, min_spread=min_spread, max_spread=max_spread, status=status)
+    items = scan_spreads_fn(settings, data_client, top=top, min_spread=min_spread, max_spread=max_spread, status=status)
     table = Table(title="Spread Scanner")
     table.add_column("Ticker")
     table.add_column("Spread")

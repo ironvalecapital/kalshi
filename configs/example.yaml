@@ -127,3 +127,6 @@ sports:
   simple_min_spread_cents: 1
   simple_imbalance_min: 0.03
   simple_ladder_levels: 3
+  use_spread_scanner: true
+  spread_scanner_min: 2
+  spread_scanner_max: 30

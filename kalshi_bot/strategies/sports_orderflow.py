@@ -22,6 +22,7 @@ from ..adapters.football_data import FootballDataClient
 from ..adapters.balldontlie import BallDontLieClient
 from ..ledger import Ledger
 from ..market_selector import pick_sports_candidates
+from ..spread_scanner import scan_spreads
 from ..orderbook_live import LiveOrderbook, OrderbookState
 from ..risk import RiskManager
 
@@ -152,6 +153,20 @@ def run_sports_strategy(
         if market_override:
             pick = type("Pick", (), {"ticker": market_override, "event_ticker": ""})()
         else:
+            if settings.sports.use_spread_scanner:
+                try:
+                    spreads = scan_spreads(
+                        settings,
+                        data_client,
+                        top=settings.sports.top_n,
+                        min_spread=settings.sports.spread_scanner_min,
+                        max_spread=settings.sports.spread_scanner_max,
+                        status="open",
+                    )
+                    if spreads:
+                        pick = type("Pick", (), {"ticker": spreads[0].ticker, "event_ticker": ""})()
+                except Exception:
+                    pick = None
             auto_ticker = _auto_pick_from_summary(settings, data_client)
             if auto_ticker:
                 pick = type("Pick", (), {"ticker": auto_ticker, "event_ticker": ""})()
