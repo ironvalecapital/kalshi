@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import math
-import threading
 import time
 from pathlib import Path
 from dateutil import parser as date_parser
@@ -11,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from ..config import BotSettings
-from ..data_rest import KalshiDataClient
+from ..data_rest import KalshiDataClient, KalshiRestError
 from ..decision_report import write_decision_report
 from ..execution import ExecutionEngine, OrderRequest
 from ..ev import kelly_contracts, kelly_fraction_no, kelly_fraction_yes
@@ -23,7 +21,7 @@ from ..adapters.balldontlie import BallDontLieClient
 from ..ledger import Ledger
 from ..market_selector import pick_sports_candidates
 from ..spread_scanner import scan_spreads
-from ..orderbook_live import LiveOrderbook, OrderbookState
+from ..orderbook_live import OrderbookState
 from ..risk import RiskManager
 
 
@@ -138,6 +136,49 @@ def _position_counts(data_client: KalshiDataClient, ticker: str) -> tuple[int, i
     return yes_count, no_count
 
 
+def _matches_family_ticker(ticker: str, family: str) -> bool:
+    fam = (family or "all").lower().strip()
+    if fam == "all":
+        return True
+    t = (ticker or "").upper()
+    rules = {
+        "sports": ("NBA", "NFL", "NHL", "MLB", "NCAA", "MATCH", "GAME", "SPORT"),
+        "crypto": ("BTC", "ETH", "CRYPTO"),
+        "finance": ("FED", "CPI", "RATE", "INFLATION", "SPX", "NASDAQ", "DJIA", "FINANCE"),
+    }
+    return any(tok in t for tok in rules.get(fam, ()))
+
+
+def _auto_pick_from_tape(
+    settings: BotSettings,
+    data_client: KalshiDataClient,
+    family: str,
+) -> Optional[str]:
+    """Pick highest-activity ticker from recent trades for the selected family."""
+    try:
+        resp = data_client.get_trades(limit=min(400, settings.sports.max_scan_markets))
+    except Exception:
+        return None
+    trades = resp.get("trades", []) if isinstance(resp, dict) else []
+    counts: dict[str, int] = {}
+    for tr in trades:
+        ticker = str(tr.get("ticker", "")).upper()
+        if not ticker:
+            continue
+        if "MULTIGAMEEXTENDED" in ticker or "QUICKSETTLE" in ticker:
+            continue
+        if not _matches_family_ticker(ticker, family):
+            continue
+        counts[ticker] = counts.get(ticker, 0) + 1
+    if not counts:
+        return None
+    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    for ticker, _ in ranked[:25]:
+        if _has_actionable_quotes(data_client, ticker):
+            return ticker
+    return None
+
+
 def run_sports_strategy(
     settings: BotSettings,
     data_client: KalshiDataClient,
@@ -149,6 +190,7 @@ def run_sports_strategy(
     sleep_s: int,
     live: bool,
     market_override: Optional[str] = None,
+    family: str = "all",
 ) -> None:
     if live:
         audit.log("mode", "LIVE MODE", {})
@@ -178,6 +220,10 @@ def run_sports_strategy(
             ncaaf_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/ncaaf/v1")
             ncaab_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/ncaab/v1")
 
+    family = (family or "all").lower().strip()
+    if family not in {"all", "sports", "crypto", "finance"}:
+        family = "all"
+
     while True:
         if exec_engine._kill_switch():
             audit.log("kill", "kill switch enabled", {})
@@ -187,7 +233,11 @@ def run_sports_strategy(
         if market_override:
             pick = type("Pick", (), {"ticker": market_override, "event_ticker": ""})()
         else:
-            if settings.sports.use_spread_scanner:
+            if family in {"crypto", "finance"}:
+                tape_ticker = _auto_pick_from_tape(settings, data_client, family=family)
+                if tape_ticker and _has_actionable_quotes(data_client, tape_ticker):
+                    pick = type("Pick", (), {"ticker": tape_ticker, "event_ticker": ""})()
+            if pick is None and settings.sports.use_spread_scanner:
                 try:
                     spreads = scan_spreads(
                         settings,
@@ -198,16 +248,24 @@ def run_sports_strategy(
                         status="open",
                     )
                     for s in spreads:
+                        if not _matches_family_ticker(s.ticker, family):
+                            continue
                         if _has_actionable_quotes(data_client, s.ticker):
                             pick = type("Pick", (), {"ticker": s.ticker, "event_ticker": ""})()
                             break
                 except Exception:
                     pick = None
             auto_ticker = _auto_pick_from_summary(settings, data_client)
-            if auto_ticker and pick is None and _has_actionable_quotes(data_client, auto_ticker):
+            if (
+                auto_ticker
+                and pick is None
+                and _matches_family_ticker(auto_ticker, family)
+                and _has_actionable_quotes(data_client, auto_ticker)
+            ):
                 pick = type("Pick", (), {"ticker": auto_ticker, "event_ticker": ""})()
             if pick is None:
-                candidates = pick_sports_candidates(settings, data_client, top_n=settings.sports.top_n)
+                scan_top_n = settings.sports.crypto_top_n if family == "crypto" else settings.sports.top_n
+                candidates = pick_sports_candidates(settings, data_client, top_n=scan_top_n, family=family)
                 if not candidates:
                     audit.log("decision", "no sports candidates", {})
                     time.sleep(sleep_s)
@@ -228,24 +286,20 @@ def run_sports_strategy(
                         if cycles <= 0:
                             break
                     continue
-        live_book = LiveOrderbook(settings, pick.ticker)
         flow = FlowFeatures()
         ob_state: Optional[OrderbookState] = None
-
-        def on_update(state: OrderbookState):
-            nonlocal ob_state
-            ob_state = state
-
-        def ws_thread():
-            asyncio.run(live_book.run(on_update))
-
-        t = threading.Thread(target=ws_thread, daemon=True)
-        t.start()
-
-        for _ in range(3):
-            if ob_state:
-                break
-            time.sleep(1)
+        try:
+            ob = data_client.get_orderbook(pick.ticker)
+            yes_levels = ob.get("yes", []) or []
+            no_levels = ob.get("no", []) or []
+            ob_state = OrderbookState(
+                yes_bids={int(p): int(sz) for p, sz in yes_levels if p is not None and sz is not None},
+                no_bids={int(p): int(sz) for p, sz in no_levels if p is not None and sz is not None},
+            )
+        except KalshiRestError as exc:
+            audit.log("decision", "orderbook rest failed", {"market": pick.ticker, "error": str(exc)})
+        except Exception as exc:
+            audit.log("decision", "orderbook parse failed", {"market": pick.ticker, "error": str(exc)})
 
         if not ob_state:
             audit.log("decision", "no orderbook state", {"market": pick.ticker})
@@ -358,13 +412,20 @@ def run_sports_strategy(
             except Exception:
                 close_min = None
         min_ev = settings.sports.min_ev_cents
+        min_fill_prob = 0.1
+        max_spread_cents = settings.sports.max_spread_cents
+        if family == "crypto":
+            min_ev = settings.sports.crypto_min_ev_cents
+            min_fill_prob = settings.sports.crypto_min_fill_prob
+            max_spread_cents = settings.sports.crypto_max_spread_cents
+
         # Category gating: higher EV threshold for sports/entertainment/media-like categories.
         if pick.event_ticker:
             key = str(pick.event_ticker).upper()
             if any(tag in key for tag in ["SPORT", "NFL", "NBA", "MLB", "NHL", "NCAAF", "NCAAB", "ENT", "MEDIA"]):
                 min_ev *= settings.sports.category_ev_multiplier
         if settings.sports.simple_active_maker:
-            if spread >= settings.sports.simple_min_spread_cents and spread <= settings.sports.max_spread_cents:
+            if spread >= settings.sports.simple_min_spread_cents and spread <= max_spread_cents:
                 # Simple maker: use imbalance + momentum to choose side.
                 if abs(imbalance) < settings.sports.simple_imbalance_min:
                     action = "ABSTAIN"
@@ -378,7 +439,7 @@ def run_sports_strategy(
                 if ev_after < min_ev:
                     action = "ABSTAIN"
         else:
-            if ev_after >= min_ev and spread <= settings.sports.max_spread_cents and fill_prob > 0.1:
+            if ev_after >= min_ev and spread <= max_spread_cents and fill_prob > min_fill_prob:
                 action = "BID_YES" if edge_cents >= 0 else "BID_NO"
 
         # Exit logic: reduce positions on edge decay, stop-loss, or near expiration.

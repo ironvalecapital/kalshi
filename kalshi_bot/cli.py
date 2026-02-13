@@ -468,6 +468,7 @@ def run_sports(
     cycles: int = typer.Option(1, help="Number of cycles"),
     sleep: int = typer.Option(10, help="Seconds between cycles"),
     market: Optional[str] = typer.Option(None, help="Override market ticker"),
+    family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
 ):
     if live:
         demo = False
@@ -475,6 +476,9 @@ def run_sports(
     if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
         raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
     settings = build_settings(config)
+    family = (family or "all").lower().strip()
+    if family not in {"all", "sports", "crypto", "finance"}:
+        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
     settings.data.env = "prod" if live else "demo"
     console.print("DEMO MODE" if not live else "LIVE MODE")
     _, data_client = build_clients(settings)
@@ -482,7 +486,19 @@ def run_sports(
     audit = AuditLogger(ledger, settings.log_path)
     risk = RiskManager(settings.risk)
     exec_engine = ExecutionEngine(data_client, ledger, risk, settings.execution)
-    run_sports_strategy(settings, data_client, ledger, audit, risk, exec_engine, cycles, sleep, live, market_override=market)
+    run_sports_strategy(
+        settings,
+        data_client,
+        ledger,
+        audit,
+        risk,
+        exec_engine,
+        cycles,
+        sleep,
+        live,
+        market_override=market,
+        family=family,
+    )
 
 
 @app.command()

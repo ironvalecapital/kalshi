@@ -138,6 +138,10 @@ sports:
   use_spread_scanner: true
   spread_scanner_min: 0
   spread_scanner_max: 99
+  crypto_min_ev_cents: -0.15
+  crypto_min_fill_prob: 0.05
+  crypto_max_spread_cents: 45.0
+  crypto_top_n: 200
   enable_exit_rules: true
   exit_edge_cents: -0.25
   stop_loss_edge_cents: -2.5

@@ -233,6 +233,11 @@ class SportsConfig(BaseModel):
     use_spread_scanner: bool = True
     spread_scanner_min: int = 2
     spread_scanner_max: int = 30
+    # Crypto lane overrides (used when running sports strategy with family=crypto).
+    crypto_min_ev_cents: float = -0.15
+    crypto_min_fill_prob: float = 0.05
+    crypto_max_spread_cents: float = 45.0
+    crypto_top_n: int = 200
     enable_exit_rules: bool = True
     exit_edge_cents: float = -0.25
     stop_loss_edge_cents: float = -2.5
