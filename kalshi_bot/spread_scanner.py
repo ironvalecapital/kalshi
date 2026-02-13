@@ -30,14 +30,30 @@ def scan_spreads(
     max_spread: int = 30,
     status: str = "open",
 ) -> List[SpreadCandidate]:
-    resp = data_client.list_markets(status=status, limit=1000)
-    markets = resp.get("markets", [])
+    markets: List[Dict[str, Any]] = []
+    statuses = [status]
+    if status == "open":
+        statuses.append("initialized")
+    for st in statuses:
+        resp = data_client.list_markets(status=st, limit=1000)
+        markets.extend(resp.get("markets", []))
     candidates: List[SpreadCandidate] = []
     now = datetime.now(timezone.utc).isoformat()
     for m in markets:
+        # Prefer orderbook bids, but fall back to summary quotes if empty.
         ob = data_client.get_orderbook(m.get("ticker"))
         prices = _orderbook_complement(ob)
         spread = prices["spread_yes"]
+        if spread is None:
+            yes_bid = m.get("yes_bid")
+            yes_ask = m.get("yes_ask")
+            if yes_bid is not None and yes_ask is not None:
+                spread = yes_ask - yes_bid
+                prices = {
+                    "best_yes_bid": yes_bid,
+                    "best_yes_ask": yes_ask,
+                    "depth_top3": 0,
+                }
         if spread is None:
             continue
         if spread < min_spread or spread > max_spread:
