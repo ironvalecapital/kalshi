@@ -109,6 +109,7 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
         reverse=True,
     )
     markets = markets[: settings.sports.max_scan_markets]
+    probe_markets = markets[: settings.sports.orderbook_probe_limit]
     now = datetime.now(timezone.utc)
     candidates: List[SportsCandidate] = []
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -158,8 +159,8 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
             continue
         pass
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = [executor.submit(fetch_one, m) for m in markets]
+    with ThreadPoolExecutor(max_workers=max(1, settings.sports.selector_workers)) as executor:
+        futures = [executor.submit(fetch_one, m) for m in probe_markets]
         for fut in as_completed(futures):
             cand = fut.result()
             if cand is None:

@@ -112,6 +112,8 @@ sports:
   maker_only: true
   category_ev_multiplier: 1.25
   max_scan_markets: 1000
+  orderbook_probe_limit: 180
+  selector_workers: 2
   markets_cache_ttl_sec: 90
   auto_pick_use_summary: true
   auto_pick_top_n: 100

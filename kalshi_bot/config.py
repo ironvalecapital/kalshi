@@ -206,6 +206,8 @@ class SportsConfig(BaseModel):
     maker_only: bool = True
     category_ev_multiplier: float = 1.25
     max_scan_markets: int = 1000
+    orderbook_probe_limit: int = 180
+    selector_workers: int = 2
     markets_cache_ttl_sec: int = 90
     auto_pick_use_summary: bool = True
     auto_pick_top_n: int = 300
