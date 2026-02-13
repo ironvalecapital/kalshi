@@ -36,6 +36,9 @@ def _close_time(market: Dict[str, Any]) -> Optional[datetime]:
 
 
 def _is_sports(settings: BotSettings, m: Dict[str, Any]) -> bool:
+    ticker = str(m.get("ticker", "")).upper()
+    if settings.sports.exclude_multigame_extended and "MULTIGAMEEXTENDED" in ticker:
+        return False
     if getattr(settings.sports, "market_universe", "sports") == "all":
         return True
     if settings.sports.allowlist and m.get("ticker") in settings.sports.allowlist:
@@ -137,6 +140,8 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
         trades = trades_resp.get("trades", [])
         trades_60m = _count_trades(trades, now - timedelta(minutes=60))
         trades_5m = _count_trades(trades, now - timedelta(minutes=5))
+        if prices["depth_top3"] <= 0 and trades_60m <= 0 and trades_5m <= 0:
+            return None
         liquidity_score = 1.0 * trades_60m + 0.5 * trades_5m + 0.1 * prices["depth_top3"] - 0.7 * prices["spread_yes"]
         return SportsCandidate(
             ticker=m.get("ticker"),

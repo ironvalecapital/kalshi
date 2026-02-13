@@ -107,6 +107,7 @@ sports:
   base_size: 1
   max_order_size: 15
   allow_unmatched_markets: true
+  exclude_multigame_extended: true
   yes_longshot_max_cents: 10
   no_tail_min_cents: 90
   maker_only: true

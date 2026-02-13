@@ -66,6 +66,7 @@ class WeatherConfig(BaseModel):
     min_trades_24h: int = 0
     top_n: int = 300
     allow_unmatched_markets: bool = True
+    exclude_multigame_extended: bool = True
     bid_improve_cents: int = 1
     max_depth_levels: int = 3
     allow_cross_spread: bool = True
