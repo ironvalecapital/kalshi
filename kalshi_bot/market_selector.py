@@ -197,7 +197,15 @@ def pick_sports_candidates(
         reverse=True,
     )
     markets = markets[: settings.sports.max_scan_markets]
-    probe_markets = markets[: settings.sports.orderbook_probe_limit]
+    prefiltered: List[Dict[str, Any]] = []
+    for m in markets:
+        ticker = str(m.get("ticker", ""))
+        if _is_excluded_ticker(settings, ticker):
+            continue
+        if not _matches_family(m, family):
+            continue
+        prefiltered.append(m)
+    probe_markets = prefiltered[: settings.sports.orderbook_probe_limit]
     now = datetime.now(timezone.utc)
     candidates: List[SportsCandidate] = []
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -240,8 +248,37 @@ def pick_sports_candidates(
             liquidity_score=liquidity_score,
         )
 
+    def seeded_family_markets() -> List[Dict[str, Any]]:
+        seeds = {
+            "all": ["BTC", "ETH", "CPI", "FED", "RATE", "NBA", "NFL"],
+            "sports": ["NBA", "NFL", "NCAA", "SOCCER", "MATCH"],
+            "crypto": ["BTC", "ETH", "CRYPTO"],
+            "finance": ["CPI", "FED", "RATE", "INFLATION", "FINANCE"],
+        }.get(family, ["BTC", "ETH", "CPI", "FED"])
+        out: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for q in seeds:
+            try:
+                resp = data_client.list_markets(query=q, limit=100)
+            except Exception:
+                continue
+            for m in resp.get("markets", []):
+                t = str(m.get("ticker", ""))
+                if not t or t in seen:
+                    continue
+                if _is_excluded_ticker(settings, t):
+                    continue
+                if not _matches_family(m, family):
+                    continue
+                seen.add(t)
+                out.append(m)
+        return out
+
     with ThreadPoolExecutor(max_workers=max(1, settings.sports.selector_workers)) as executor:
-        futures = [executor.submit(fetch_one, m) for m in probe_markets]
+        scan_set = probe_markets
+        if not scan_set and family in {"crypto", "finance"}:
+            scan_set = seeded_family_markets()
+        futures = [executor.submit(fetch_one, m) for m in scan_set]
         for fut in as_completed(futures):
             cand = fut.result()
             if cand is None:
@@ -253,11 +290,7 @@ def pick_sports_candidates(
     if not candidates:
         summary_candidates: List[SportsCandidate] = []
         for m in probe_markets:
-            if not _matches_family(m, family):
-                continue
             ticker = str(m.get("ticker", "")).upper()
-            if _is_excluded_ticker(settings, ticker):
-                continue
             prices = _summary_quotes(m)
             if not _is_actionable_quote(settings, prices):
                 continue
@@ -291,7 +324,7 @@ def pick_sports_candidates(
         }.get(family, ["BTC", "ETH", "NBA", "NFL", "CPI", "FED"])
         for q in fallback_queries:
             try:
-                resp = data_client.list_markets(query=q, status="open", limit=100)
+                resp = data_client.list_markets(query=q, limit=100)
             except Exception:
                 continue
             for m in resp.get("markets", []):
@@ -330,6 +363,7 @@ def diagnose_sports_markets(
     data_client: KalshiDataClient,
     top_n: int,
     family: str = "all",
+    include_excluded: bool = False,
 ) -> List[SportsDiagnostic]:
     family = (family or "all").lower().strip()
     if family not in {"all", "sports", "crypto", "finance"}:
@@ -365,6 +399,8 @@ def diagnose_sports_markets(
         spread = prices["spread_yes"]
         if reason == "ok" and not _is_actionable_quote(settings, prices):
             reason = "no_actionable_quotes"
+        if not include_excluded and reason in {"family_mismatch", "excluded_ticker"}:
+            continue
         spread_for_score = spread if spread is not None else 0
         out.append(
             SportsDiagnostic(
@@ -382,5 +418,47 @@ def diagnose_sports_markets(
                 liquidity_score=-0.7 * spread_for_score + float(m.get("volume_24h", 0) or 0) * 0.001,
             )
         )
+    out.sort(key=lambda r: (r.reason != "ok", -r.liquidity_score))
+    if out:
+        return out[:top_n]
+
+    fallback_queries = {
+        "all": ["BTC", "ETH", "NBA", "NFL", "NCAA", "CPI", "FED", "RATE", "FINANCE"],
+        "sports": ["NBA", "NFL", "NCAA", "SOCCER", "MATCH"],
+        "crypto": ["BTC", "ETH", "CRYPTO"],
+        "finance": ["CPI", "FED", "RATE", "INFLATION", "FINANCE"],
+    }.get(family, ["BTC", "ETH", "NBA", "NFL", "CPI", "FED"])
+    for q in fallback_queries:
+        try:
+            resp = data_client.list_markets(query=q, limit=50)
+        except Exception:
+            continue
+        for m in resp.get("markets", []):
+            ticker = str(m.get("ticker", ""))
+            if _is_excluded_ticker(settings, ticker):
+                continue
+            prices = _summary_quotes(m)
+            spread = prices["spread_yes"]
+            reason = "ok" if _is_actionable_quote(settings, prices) else "no_actionable_quotes"
+            out.append(
+                SportsDiagnostic(
+                    ticker=ticker,
+                    title=m.get("title", ""),
+                    family=family,
+                    reason=reason,
+                    best_yes_bid=prices["best_yes_bid"],
+                    best_yes_ask=prices["best_yes_ask"],
+                    best_no_bid=prices["best_no_bid"],
+                    best_no_ask=prices["best_no_ask"],
+                    spread_yes=spread,
+                    depth_top3=0,
+                    trades_60m=0,
+                    liquidity_score=-0.7 * (spread if spread is not None else 0),
+                )
+            )
+            if len(out) >= top_n:
+                break
+        if len(out) >= top_n:
+            break
     out.sort(key=lambda r: (r.reason != "ok", -r.liquidity_score))
     return out[:top_n]

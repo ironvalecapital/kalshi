@@ -208,13 +208,20 @@ def pick_sports(
 def pick_markets(
     top: int = typer.Option(30, help="Top N"),
     family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
+    include_excluded: bool = typer.Option(False, help="Include excluded/family-mismatch rows"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
     settings = build_settings(config)
     settings.sports.orderbook_probe_limit = min(settings.sports.orderbook_probe_limit, max(30, top * 2))
     settings.sports.selector_workers = 1
     _, data_client = build_clients(settings)
-    rows = diagnose_sports_markets(settings, data_client, top_n=top, family=family)
+    rows = diagnose_sports_markets(
+        settings,
+        data_client,
+        top_n=top,
+        family=family,
+        include_excluded=include_excluded,
+    )
     if not rows:
         console.print("No markets returned.")
         raise typer.Exit(0)
