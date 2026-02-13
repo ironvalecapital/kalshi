@@ -8,6 +8,7 @@ data:
   api_base_prod: "https://api.elections.kalshi.com/trade-api/v2"
   ws_url_demo: "wss://demo-api.kalshi.co/trade-api/ws/v2"
   ws_url_prod: "wss://api.elections.kalshi.com/trade-api/ws/v2"
+  ws_open_timeout_sec: 30
 
 rate_limit:
   tier: basic

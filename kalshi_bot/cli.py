@@ -23,6 +23,7 @@ from .ev import estimate_fee_cents
 from .features import implied_probability, normalize_orderbook
 from .ledger import Ledger
 from .market_picker import pick_weather_candidates
+from .market_scanner import scan_markets as scan_markets_fn
 from .models.bayes_prior import bayes_update, choose_prior
 from .models.consistency import check_consistency
 from .models.microstructure import adjust_for_event_time
@@ -37,6 +38,12 @@ from .risk import RiskManager
 from .strategies.weather_high_temp import run_weather_strategy
 from .automate.learner import run_learn
 from .spread_scanner import scan_spreads as scan_spreads_fn
+from .edge_scorer import score_no, score_yes, implied_probability as implied_prob_score
+from .execution_manager import maker_ladder_cycle
+from .order_lifecycle import OrderLifecycle
+from .edge_scorer import score_no, score_yes, implied_probability
+from .execution_manager import maker_ladder_cycle
+from .order_lifecycle import OrderLifecycle
 from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 
@@ -295,8 +302,6 @@ def run_weather(
 ):
     if live:
         demo = False
-    if market is None:
-        raise typer.BadParameter("Market ticker required unless using --lane")
     ensure_demo_or_live(demo, live, i_understand_risk)
     if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
         raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
@@ -509,7 +514,7 @@ def backtest(
 def run(
     lane: Optional[str] = typer.Option(None, help="Lane: weather|sports"),
     strategy: str = typer.Option("bayes", help="bayes|consistency|micro"),
-    market: str = typer.Option(..., help="Market ticker"),
+    market: Optional[str] = typer.Option(None, help="Market ticker"),
     demo: bool = typer.Option(True, help="Use demo environment"),
     live: bool = typer.Option(False, help="Use live environment"),
     i_understand_risk: bool = typer.Option(False, help="Confirm live trading"),
@@ -532,6 +537,8 @@ def run(
             return
         raise typer.BadParameter("lane must be weather or sports")
 
+    if market is None:
+        raise typer.BadParameter("Market ticker required unless using --lane")
     ensure_demo_or_live(demo, live, i_understand_risk)
     if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
         raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
@@ -775,6 +782,191 @@ def scan_spreads_cmd(
         )
     console.print(table)
 
+
+@app.command("scan-markets")
+def scan_markets_cmd(
+    top: int = typer.Option(20, help="Number of markets to show"),
+    min_spread: int = typer.Option(1, help="Min spread (cents)"),
+    max_spread: int = typer.Option(30, help="Max spread (cents)"),
+    min_trades_24h: int = typer.Option(1, help="Min trades in last 24h"),
+    min_time_to_close_min: int = typer.Option(30, help="Min minutes to close"),
+    status: str = typer.Option("open", help="Status filter: open/closed/settled/unopened"),
+    export: Optional[str] = typer.Option(None, help="Export JSON to directory"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    scans = scan_markets_fn(
+        settings,
+        data_client,
+        top=top,
+        min_spread=min_spread,
+        max_spread=max_spread,
+        min_trades_24h=min_trades_24h,
+        min_time_to_close_min=min_time_to_close_min,
+        statuses=[status],
+    )
+    table = Table(title="Market Scan")
+    table.add_column("Ticker")
+    table.add_column("Spread")
+    table.add_column("YesBid")
+    table.add_column("YesAsk")
+    table.add_column("Trades1h")
+    table.add_column("Trades24h")
+    table.add_column("Volume24h")
+    for s in scans:
+        table.add_row(
+            s.ticker,
+            str(s.spread_yes),
+            str(s.best_yes_bid),
+            str(s.best_yes_ask),
+            str(s.trades_1h),
+            str(s.trades_24h),
+            f"{s.volume_24h:.0f}",
+        )
+    console.print(table)
+    if export:
+        Path(export).mkdir(parents=True, exist_ok=True)
+        out = Path(export) / "market_scan.json"
+        out.write_text(json.dumps([s.__dict__ for s in scans], indent=2))
+        console.print(f"Wrote {out}")
+
+
+@app.command("score-edge")
+def score_edge_cmd(
+    top: int = typer.Option(20, help="Number of markets to score"),
+    min_spread: int = typer.Option(1, help="Min spread (cents)"),
+    max_spread: int = typer.Option(30, help="Max spread (cents)"),
+    min_trades_24h: int = typer.Option(1, help="Min trades in last 24h"),
+    min_time_to_close_min: int = typer.Option(30, help="Min minutes to close"),
+    status: str = typer.Option("open", help="Status filter"),
+    edge_bias_cents: float = typer.Option(0.0, help="Bias implied probability (cents)"),
+    export: Optional[str] = typer.Option(None, help="Export JSON to directory"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    scans = scan_markets_fn(
+        settings,
+        data_client,
+        top=top,
+        min_spread=min_spread,
+        max_spread=max_spread,
+        min_trades_24h=min_trades_24h,
+        min_time_to_close_min=min_time_to_close_min,
+        statuses=[status],
+    )
+    table = Table(title="Edge Scores")
+    table.add_column("Ticker")
+    table.add_column("Side")
+    table.add_column("Price")
+    table.add_column("p_model")
+    table.add_column("p_implied")
+    table.add_column("EV(c)")
+    scores = []
+    for s in scans:
+        if s.best_yes_ask is None or s.best_yes_bid is None:
+            continue
+        mid = (s.best_yes_ask + s.best_yes_bid) / 2.0
+        p_implied = implied_prob_score(int(round(mid))) or 0.5
+        p_model = max(0.0, min(1.0, p_implied + edge_bias_cents / 100.0))
+        score_yes_obj = score_yes(
+            s.ticker,
+            price_cents=int(round(s.best_yes_ask)),
+            p_model=p_model,
+            spread_cents=s.spread_yes or 0,
+            count=1,
+            maker=True,
+            maker_rate=settings.execution.maker_fee_rate,
+            taker_rate=settings.execution.taker_fee_rate,
+            slippage_cents=0.0,
+        )
+        score_no_obj = score_no(
+            s.ticker,
+            price_cents=int(round(s.best_no_ask or (100 - s.best_yes_bid))),
+            p_model=p_model,
+            spread_cents=s.spread_yes or 0,
+            count=1,
+            maker=True,
+            maker_rate=settings.execution.maker_fee_rate,
+            taker_rate=settings.execution.taker_fee_rate,
+            slippage_cents=0.0,
+        )
+        best = score_yes_obj if score_yes_obj.ev_cents >= score_no_obj.ev_cents else score_no_obj
+        table.add_row(
+            s.ticker,
+            best.side.upper(),
+            str(best.price_cents),
+            f"{best.p_model:.3f}",
+            f"{best.p_implied:.3f}",
+            f"{best.ev_cents:.2f}",
+        )
+        scores.append(best.__dict__)
+    console.print(table)
+    if export:
+        Path(export).mkdir(parents=True, exist_ok=True)
+        out = Path(export) / "edge_scores.json"
+        out.write_text(json.dumps(scores, indent=2))
+        console.print(f"Wrote {out}")
+
+
+@app.command()
+def run_strategy(
+    strategy: str = typer.Option("maker_ladder", help="Strategy: maker_ladder"),
+    demo: bool = typer.Option(True, help="Use demo environment"),
+    live: bool = typer.Option(False, help="Use live environment"),
+    i_understand_risk: bool = typer.Option(False, help="Confirm live trading"),
+    cycles: int = typer.Option(1, help="Number of cycles"),
+    sleep: int = typer.Option(10, help="Seconds between cycles"),
+    top: int = typer.Option(20, help="Number of markets to scan"),
+    max_orders: int = typer.Option(5, help="Max orders per cycle"),
+    levels: int = typer.Option(3, help="Ladder levels"),
+    edge_bias_cents: float = typer.Option(0.0, help="Bias implied probability (cents)"),
+    min_ev_cents: float = typer.Option(0.0, help="Min EV per contract (cents)"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    if live:
+        demo = False
+    ensure_demo_or_live(demo, live, i_understand_risk)
+    if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
+        raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
+    if strategy != "maker_ladder":
+        raise typer.BadParameter("Only maker_ladder is supported for now")
+
+    settings = build_settings(config)
+    settings.data.env = "prod" if live else "demo"
+    console.print("DEMO MODE" if not live else "LIVE MODE")
+    _, data_client = build_clients(settings)
+    ledger = Ledger(settings.db_path)
+    audit = AuditLogger(ledger, settings.log_path)
+    risk = RiskManager(settings.risk)
+    exec_engine = ExecutionEngine(data_client, ledger, risk, settings.execution)
+    lifecycle = OrderLifecycle(exec_engine, ledger)
+
+    for _ in range(cycles):
+        scans = scan_markets_fn(settings, data_client, top=top)
+        p_bias = edge_bias_cents / 100.0
+        decisions = maker_ladder_cycle(
+            settings,
+            exec_engine,
+            ledger,
+            scans,
+            p_model=0.5 + p_bias,
+            max_orders=max_orders,
+            levels=levels,
+            min_ev_cents=min_ev_cents,
+            lifecycle=lifecycle,
+        )
+        audit.log(
+            "strategy",
+            "maker_ladder",
+            {
+                "decisions": [d.score.__dict__ for d in decisions],
+                "cycle_markets": len(scans),
+            },
+        )
+        if cycles > 1:
+            time.sleep(sleep)
 
 if __name__ == "__main__":
     app()

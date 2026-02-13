@@ -26,8 +26,19 @@ class KalshiWSClient:
     async def _connect(self):
         headers = self._headers()
         if headers:
-            return await websockets.connect(self.url, additional_headers=headers, ping_interval=20, ping_timeout=20)
-        return await websockets.connect(self.url, ping_interval=20, ping_timeout=20)
+            return await websockets.connect(
+                self.url,
+                additional_headers=headers,
+                ping_interval=20,
+                ping_timeout=20,
+                open_timeout=self.settings.data.ws_open_timeout_sec,
+            )
+        return await websockets.connect(
+            self.url,
+            ping_interval=20,
+            ping_timeout=20,
+            open_timeout=self.settings.data.ws_open_timeout_sec,
+        )
 
     async def subscribe(
         self,

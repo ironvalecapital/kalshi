@@ -46,6 +46,7 @@ class DataConfig(BaseModel):
     api_base_prod: str = "https://api.elections.kalshi.com/trade-api/v2"
     ws_url_demo: str = "wss://demo-api.kalshi.co/trade-api/ws/v2"
     ws_url_prod: str = "wss://api.elections.kalshi.com/trade-api/ws/v2"
+    ws_open_timeout_sec: int = 30
 
 
 class WeatherConfig(BaseModel):

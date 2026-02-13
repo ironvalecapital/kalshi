@@ -70,8 +70,19 @@ class LiveOrderbook:
     async def _connect(self):
         headers = self._headers()
         if headers:
-            return await websockets.connect(ws_url(self.settings), additional_headers=headers, ping_interval=20, ping_timeout=20)
-        return await websockets.connect(ws_url(self.settings), ping_interval=20, ping_timeout=20)
+            return await websockets.connect(
+                ws_url(self.settings),
+                additional_headers=headers,
+                ping_interval=20,
+                ping_timeout=20,
+                open_timeout=self.settings.data.ws_open_timeout_sec,
+            )
+        return await websockets.connect(
+            ws_url(self.settings),
+            ping_interval=20,
+            ping_timeout=20,
+            open_timeout=self.settings.data.ws_open_timeout_sec,
+        )
 
     async def subscribe(self, ws) -> None:
         # WebSocket market data channels: orderbook_snapshot then orderbook_delta.
@@ -92,10 +103,15 @@ class LiveOrderbook:
     def apply_delta(self, msg: Dict[str, Any]) -> None:
         delta = msg.get("msg", msg)
         side = delta.get("side")
-        if delta.get("price") is None or delta.get("size") is None:
+        price_raw = delta.get("price")
+        size_raw = delta.get("size")
+        if price_raw is None or size_raw is None:
             return
-        price = int(delta.get("price"))
-        size = int(delta.get("size"))
+        try:
+            price = int(price_raw)
+            size = int(size_raw)
+        except (TypeError, ValueError):
+            return
         book = self.state.yes_bids if side == "yes" else self.state.no_bids
         if size <= 0:
             book.pop(price, None)
