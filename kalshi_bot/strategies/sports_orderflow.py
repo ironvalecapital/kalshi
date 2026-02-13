@@ -215,6 +215,7 @@ def run_sports_strategy(
     sleep_s: int,
     live: bool,
     market_override: Optional[str] = None,
+    market_overrides: Optional[list[str]] = None,
     family: str = "all",
 ) -> None:
     if live:
@@ -248,6 +249,10 @@ def run_sports_strategy(
     family = (family or "all").lower().strip()
     if family not in {"all", "sports", "crypto", "finance"}:
         family = "all"
+    forced_markets = [t.strip() for t in (market_overrides or []) if t and t.strip()]
+    if market_override and market_override not in forced_markets:
+        forced_markets.append(market_override)
+    forced_idx = 0
 
     while True:
         if exec_engine._kill_switch():
@@ -255,8 +260,10 @@ def run_sports_strategy(
             break
 
         pick = None
-        if market_override:
-            pick = type("Pick", (), {"ticker": market_override, "event_ticker": ""})()
+        if forced_markets:
+            forced_ticker = forced_markets[forced_idx % len(forced_markets)]
+            forced_idx += 1
+            pick = type("Pick", (), {"ticker": forced_ticker, "event_ticker": ""})()
         else:
             if family in {"crypto", "finance"}:
                 tape_ticker = _auto_pick_from_tape(settings, data_client, family=family)

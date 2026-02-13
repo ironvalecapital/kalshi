@@ -234,7 +234,7 @@ def hot_edge(
     if family not in {"all", "sports", "crypto", "finance"}:
         raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
 
-    # Gather a recent tape window.
+    # Gather a recent tape window once.
     tape: list[dict] = []
     cursor: Optional[str] = None
     pages = 0
@@ -249,70 +249,84 @@ def hot_edge(
         if not cursor:
             break
 
-    counts: Counter[str] = Counter()
-    for tr in tape:
-        ticker = str(tr.get("ticker", "")).upper()
-        if not ticker:
-            continue
-        if not _ticker_family_match(ticker, family):
-            continue
-        if "MULTIGAMEEXTENDED" in ticker or "QUICKSETTLE" in ticker:
-            continue
-        counts[ticker] += 1
-    if not counts:
-        console.print("No hot tickers found for this family.")
-        raise typer.Exit(0)
-
-    rows: list[dict[str, Any]] = []
-    for ticker, n in counts.most_common(max(top * 3, 40)):
-        m = data_client.get_market(ticker)
-        ob = data_client.get_orderbook(ticker)
-        yes_bids = ob.get("yes", []) or []
-        no_bids = ob.get("no", []) or []
-        yes_bid = yes_bids[0][0] if yes_bids else m.get("yes_bid")
-        no_bid = no_bids[0][0] if no_bids else m.get("no_bid")
-        yes_ask = 100 - no_bid if no_bid is not None else m.get("yes_ask")
-        if yes_bid is None or yes_ask is None:
-            continue
-        spread = yes_ask - yes_bid
-        if spread < 0:
-            continue
-        depth_yes = sum(int(level[1]) for level in yes_bids[:3]) if yes_bids else 0
-        # Side-inference from taker side when present.
-        signed = 0.0
-        trades_5m = 0
+    def build_rows_for_family(fam: str) -> list[dict[str, Any]]:
+        counts: Counter[str] = Counter()
         for tr in tape:
-            if str(tr.get("ticker", "")).upper() != ticker:
+            ticker = str(tr.get("ticker", "")).upper()
+            if not ticker:
                 continue
-            side = str(tr.get("taker_side") or tr.get("side") or "").lower()
-            size = float(tr.get("count") or 0)
-            if side == "yes":
-                signed += size
-            elif side == "no":
-                signed -= size
-            trades_5m += 1
-        p_implied = yes_ask / 100.0
-        # Conservative tape prior; not a forecast truth.
-        tape_tilt = max(-0.05, min(0.05, signed / max(1.0, float(n) * 20.0)))
-        p_model = max(0.01, min(0.99, p_implied + tape_tilt))
-        edge_cents = (p_model - p_implied) * 100.0
-        fee_total = estimate_fee_cents(count=count, price_cents=int(yes_bid + 1), maker=True, maker_rate=settings.execution.maker_fee_rate, taker_rate=settings.execution.taker_fee_rate)
-        fee_per = fee_total / max(1, count)
-        queue_ahead = int(yes_bids[0][1]) if yes_bids else max(1, depth_yes)
-        fill_prob = _queue_fill_prob(queue_ahead=queue_ahead, trades_5m=trades_5m, spread=spread, horizon_sec=60)
-        ev_cents = (edge_cents - fee_per) * fill_prob
-        rows.append(
-            {
-                "ticker": ticker,
-                "trades": n,
-                "yes_bid": yes_bid,
-                "yes_ask": yes_ask,
-                "spread": spread,
-                "edge": edge_cents,
-                "fill_prob": fill_prob,
-                "ev_exec": ev_cents,
-            }
-        )
+            if not _ticker_family_match(ticker, fam):
+                continue
+            if "MULTIGAMEEXTENDED" in ticker or "QUICKSETTLE" in ticker:
+                continue
+            counts[ticker] += 1
+        rows_local: list[dict[str, Any]] = []
+        for ticker, n in counts.most_common(max(top * 3, 40)):
+            m = data_client.get_market(ticker)
+            ob = data_client.get_orderbook(ticker)
+            yes_bids = ob.get("yes", []) or []
+            no_bids = ob.get("no", []) or []
+            yes_bid = yes_bids[0][0] if yes_bids else m.get("yes_bid")
+            no_bid = no_bids[0][0] if no_bids else m.get("no_bid")
+            yes_ask = 100 - no_bid if no_bid is not None else m.get("yes_ask")
+            if yes_bid is None or yes_ask is None:
+                continue
+            spread = yes_ask - yes_bid
+            if spread < 0:
+                continue
+            depth_yes = sum(int(level[1]) for level in yes_bids[:3]) if yes_bids else 0
+            signed = 0.0
+            trades_5m = 0
+            for tr in tape:
+                if str(tr.get("ticker", "")).upper() != ticker:
+                    continue
+                side = str(tr.get("taker_side") or tr.get("side") or "").lower()
+                size = float(tr.get("count") or 0)
+                if side == "yes":
+                    signed += size
+                elif side == "no":
+                    signed -= size
+                trades_5m += 1
+            p_implied = yes_ask / 100.0
+            tape_tilt = max(-0.05, min(0.05, signed / max(1.0, float(n) * 20.0)))
+            p_model = max(0.01, min(0.99, p_implied + tape_tilt))
+            edge_cents = (p_model - p_implied) * 100.0
+            fee_total = estimate_fee_cents(
+                count=count,
+                price_cents=int(yes_bid + 1),
+                maker=True,
+                maker_rate=settings.execution.maker_fee_rate,
+                taker_rate=settings.execution.taker_fee_rate,
+            )
+            fee_per = fee_total / max(1, count)
+            queue_ahead = int(yes_bids[0][1]) if yes_bids else max(1, depth_yes)
+            fill_prob = _queue_fill_prob(queue_ahead=queue_ahead, trades_5m=trades_5m, spread=spread, horizon_sec=60)
+            ev_cents = (edge_cents - fee_per) * fill_prob
+            rows_local.append(
+                {
+                    "ticker": ticker,
+                    "family": fam,
+                    "trades": n,
+                    "yes_bid": yes_bid,
+                    "yes_ask": yes_ask,
+                    "spread": spread,
+                    "edge": edge_cents,
+                    "fill_prob": fill_prob,
+                    "ev_exec": ev_cents,
+                }
+            )
+        return rows_local
+
+    rows = build_rows_for_family(family)
+    if not rows and family != "all":
+        fallback_families = ["all", "crypto", "finance", "sports"]
+        for fam in fallback_families:
+            if fam == family:
+                continue
+            rows = build_rows_for_family(fam)
+            if rows:
+                console.print(f"No actionable rows for family={family}. Falling back to family={fam}.")
+                break
 
     rows.sort(key=lambda r: r["ev_exec"], reverse=True)
     if not rows:
@@ -320,6 +334,7 @@ def hot_edge(
         raise typer.Exit(0)
     table = Table(title="Hot Edge Rank (Tape + Queue + Fees)")
     table.add_column("Ticker")
+    table.add_column("Family")
     table.add_column("Trades")
     table.add_column("YesBid")
     table.add_column("YesAsk")
@@ -331,6 +346,7 @@ def hot_edge(
     for r in rows:
         table.add_row(
             r["ticker"],
+            r["family"],
             str(r["trades"]),
             str(r["yes_bid"]),
             str(r["yes_ask"]),
@@ -662,6 +678,7 @@ def run_sports(
     cycles: int = typer.Option(1, help="Number of cycles"),
     sleep: int = typer.Option(10, help="Seconds between cycles"),
     market: Optional[str] = typer.Option(None, help="Override market ticker"),
+    markets: Optional[str] = typer.Option(None, help="Comma-separated market tickers to run in rotation"),
     family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
 ):
     if live:
@@ -673,6 +690,9 @@ def run_sports(
     family = (family or "all").lower().strip()
     if family not in {"all", "sports", "crypto", "finance"}:
         raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
+    market_list = [t.strip() for t in (markets or "").split(",") if t.strip()]
+    if market and market not in market_list:
+        market_list.append(market)
     settings.data.env = "prod" if live else "demo"
     console.print("DEMO MODE" if not live else "LIVE MODE")
     _, data_client = build_clients(settings)
@@ -691,6 +711,7 @@ def run_sports(
         sleep,
         live,
         market_override=market,
+        market_overrides=market_list or None,
         family=family,
     )
 
