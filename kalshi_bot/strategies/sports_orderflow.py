@@ -34,6 +34,20 @@ def _fill_prob(depth: int, spread: int, trade_rate: float) -> float:
     return _sigmoid(x)
 
 
+def _probability_uncertainty(
+    trades_60m: int,
+    depth_top3: int,
+    spread_cents: float,
+    depth_divisor: float,
+    spread_weight: float,
+) -> float:
+    # Conservative uncertainty proxy:
+    # lower with more recent flow/depth, higher with wider spread.
+    eff_n = max(0.0, float(trades_60m)) + (max(0.0, float(depth_top3)) / max(1e-6, depth_divisor))
+    base = 0.20 / math.sqrt(eff_n + 1.0)
+    return base + max(0.0, float(spread_cents)) * spread_weight
+
+
 def _implied_mid_yes(yes_bid: Optional[int], yes_ask: Optional[int]) -> Optional[float]:
     if yes_bid is None or yes_ask is None:
         return None
@@ -390,11 +404,21 @@ def run_sports_strategy(
         delta_p += 0.01 * (drift * 100.0)
         p_next = max(0.01, min(0.99, implied_yes + delta_p))
 
-        edge_cents = (p_next - (yes_ask / 100.0 if yes_ask is not None else implied_yes)) * 100.0
+        p_implied_ask = (yes_ask / 100.0) if yes_ask is not None else implied_yes
+        uncertainty = _probability_uncertainty(
+            trades_60m=trades_60m,
+            depth_top3=depth,
+            spread_cents=float(spread),
+            depth_divisor=settings.sports.uncertainty_depth_divisor,
+            spread_weight=settings.sports.uncertainty_spread_weight,
+        )
+        p_lower_bound = max(0.01, p_next - settings.sports.uncertainty_z * uncertainty)
+        edge_cents = (p_lower_bound - p_implied_ask) * 100.0
         fee = fee_cents(1, yes_ask or 0, maker=True)
         ev_after = edge_cents - fee
 
         fill_prob = _fill_prob(depth, spread, trades_5m / 5.0)
+        ev_exec = ev_after * fill_prob
         action = "ABSTAIN"
         yes_pos, no_pos = _position_counts(data_client, pick.ticker)
         market_meta = data_client.get_market(pick.ticker)
@@ -418,6 +442,8 @@ def run_sports_strategy(
             min_ev = settings.sports.crypto_min_ev_cents
             min_fill_prob = settings.sports.crypto_min_fill_prob
             max_spread_cents = settings.sports.crypto_max_spread_cents
+        if trades_60m < settings.sports.illiquid_min_trades_60m or depth < settings.sports.illiquid_min_depth_top3:
+            min_ev += settings.sports.illiquid_ev_penalty_cents
 
         # Category gating: higher EV threshold for sports/entertainment/media-like categories.
         if pick.event_ticker:
@@ -436,10 +462,11 @@ def run_sports_strategy(
                 if spread_trend > 0.5:
                     edge_cents *= 0.5
                 ev_after = edge_cents
-                if ev_after < min_ev:
+                ev_exec = ev_after * fill_prob
+                if ev_exec < min_ev:
                     action = "ABSTAIN"
         else:
-            if ev_after >= min_ev and spread <= max_spread_cents and fill_prob > min_fill_prob:
+            if ev_exec >= min_ev and spread <= max_spread_cents and fill_prob > min_fill_prob:
                 action = "BID_YES" if edge_cents >= 0 else "BID_NO"
 
         # Exit logic: reduce positions on edge decay, stop-loss, or near expiration.
@@ -681,8 +708,11 @@ def run_sports_strategy(
             },
             "model": {
                 "p_next": p_next,
+                "p_lower_bound": p_lower_bound,
                 "implied_yes": implied_yes,
+                "uncertainty": uncertainty,
                 "edge_cents": edge_cents,
+                "ev_exec_cents": ev_exec,
             },
             "fees": {"fee_cents": fee, "maker": True},
             "fill_prob": fill_prob,

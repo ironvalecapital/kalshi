@@ -238,6 +238,12 @@ class SportsConfig(BaseModel):
     crypto_min_fill_prob: float = 0.05
     crypto_max_spread_cents: float = 45.0
     crypto_top_n: int = 200
+    uncertainty_z: float = 1.0
+    uncertainty_depth_divisor: float = 20.0
+    uncertainty_spread_weight: float = 0.002
+    illiquid_min_trades_60m: int = 5
+    illiquid_min_depth_top3: int = 10
+    illiquid_ev_penalty_cents: float = 0.35
     enable_exit_rules: bool = True
     exit_edge_cents: float = -0.25
     stop_loss_edge_cents: float = -2.5

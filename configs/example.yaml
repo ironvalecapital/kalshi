@@ -142,6 +142,12 @@ sports:
   crypto_min_fill_prob: 0.05
   crypto_max_spread_cents: 45.0
   crypto_top_n: 200
+  uncertainty_z: 1.0
+  uncertainty_depth_divisor: 20.0
+  uncertainty_spread_weight: 0.002
+  illiquid_min_trades_60m: 5
+  illiquid_min_depth_top3: 10
+  illiquid_ev_penalty_cents: 0.35
   enable_exit_rules: true
   exit_edge_cents: -0.25
   stop_loss_edge_cents: -2.5

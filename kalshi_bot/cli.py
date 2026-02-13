@@ -402,35 +402,94 @@ def watchlist_server(
 @app.command()
 def watch_flow(
     market: str = typer.Option(..., help="Market ticker"),
+    family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
+    poll_sec: int = typer.Option(2, help="Polling seconds"),
+    auto_rotate: bool = typer.Option(True, help="Rotate to next hot ticker if no quotes"),
+    rotate_after_empty: int = typer.Option(8, help="Rotate after N empty polls"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
     settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    family = (family or "all").lower().strip()
+    if family not in {"all", "sports", "crypto", "finance"}:
+        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
     flow = FlowFeatures()
-    book = LiveOrderbook(settings, market)
+    current_market = market
+    empty_polls = 0
 
-    async def _run():
-        async def on_update(state):
-            best_yes = state.best_yes_bid()
-            best_yes_ask = state.best_yes_ask()
-            if best_yes is not None and best_yes_ask is not None:
-                mid = (best_yes + best_yes_ask) / 2
-                flow.update_mid(mid)
-            depth_yes = state.depth_yes_topk(3)
-            depth_no = state.depth_no_topk(3)
-            console.print(
-                {
-                    "market": market,
-                    "best_yes": best_yes,
-                    "best_yes_ask": best_yes_ask,
-                    "spread": state.spread_yes(),
-                    "imbalance": flow.imbalance(depth_yes, depth_no),
-                    "momentum_30s": flow.momentum(30),
-                }
-            )
+    def _derive_book_snapshot(ticker: str) -> Dict[str, Any]:
+        ob = data_client.get_orderbook(ticker)
+        yes_levels = ob.get("yes", []) or []
+        no_levels = ob.get("no", []) or []
+        best_yes_bid = yes_levels[0][0] if yes_levels else None
+        best_no_bid = no_levels[0][0] if no_levels else None
+        best_yes_ask = 100 - best_no_bid if best_no_bid is not None else None
+        depth_yes = sum(int(level[1]) for level in yes_levels[:3]) if yes_levels else 0
+        depth_no = sum(int(level[1]) for level in no_levels[:3]) if no_levels else 0
 
-        await book.run(on_update)
+        # REST summary fallback when orderbook is empty.
+        if best_yes_bid is None and best_no_bid is None:
+            m = data_client.get_market(ticker)
+            best_yes_bid = m.get("yes_bid")
+            best_no_bid = m.get("no_bid")
+            if best_yes_ask is None and best_no_bid is not None:
+                best_yes_ask = 100 - best_no_bid
+        spread = (best_yes_ask - best_yes_bid) if best_yes_ask is not None and best_yes_bid is not None else None
+        return {
+            "best_yes_bid": best_yes_bid,
+            "best_yes_ask": best_yes_ask,
+            "best_no_bid": best_no_bid,
+            "spread": spread,
+            "depth_yes": depth_yes,
+            "depth_no": depth_no,
+        }
 
-    asyncio.run(_run())
+    def _next_hot_ticker(current: str) -> Optional[str]:
+        resp = data_client.get_trades(limit=300)
+        counts: Counter[str] = Counter()
+        for tr in resp.get("trades", []) or []:
+            ticker = str(tr.get("ticker", "")).upper()
+            if not ticker or ticker == current.upper():
+                continue
+            if not _ticker_family_match(ticker, family):
+                continue
+            counts[ticker] += 1
+        for ticker, _ in counts.most_common(25):
+            snap = _derive_book_snapshot(ticker)
+            if snap["best_yes_bid"] is not None or snap["best_no_bid"] is not None:
+                return ticker
+        return None
+
+    while True:
+        snap = _derive_book_snapshot(current_market)
+        best_yes = snap["best_yes_bid"]
+        best_yes_ask = snap["best_yes_ask"]
+        if best_yes is not None and best_yes_ask is not None:
+            flow.update_mid((best_yes + best_yes_ask) / 2)
+        depth_yes = snap["depth_yes"]
+        depth_no = snap["depth_no"]
+        console.print(
+            {
+                "market": current_market,
+                "best_yes": best_yes,
+                "best_yes_ask": best_yes_ask,
+                "spread": snap["spread"],
+                "imbalance": flow.imbalance(depth_yes, depth_no),
+                "momentum_30s": flow.momentum(30),
+            }
+        )
+
+        if best_yes is None and snap["best_no_bid"] is None:
+            empty_polls += 1
+            if auto_rotate and empty_polls >= rotate_after_empty:
+                next_ticker = _next_hot_ticker(current_market)
+                if next_ticker and next_ticker != current_market:
+                    console.print(f"Rotating to hot ticker: {next_ticker}")
+                    current_market = next_ticker
+                    empty_polls = 0
+        else:
+            empty_polls = 0
+        time.sleep(max(1, poll_sec))
 
 
 @app.command()
