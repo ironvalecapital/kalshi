@@ -101,7 +101,8 @@ class KalshiRestClient:
         params: Dict[str, Any] = {"limit": limit}
         if query:
             params["search"] = query
-        if status:
+        # Kalshi only accepts open/closed/settled status. Ignore invalid values like "initialized".
+        if status and status in {"open", "closed", "settled"}:
             params["status"] = status
         if series_ticker:
             params["series_ticker"] = series_ticker
