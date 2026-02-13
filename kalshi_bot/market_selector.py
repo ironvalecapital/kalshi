@@ -37,7 +37,7 @@ def _close_time(market: Dict[str, Any]) -> Optional[datetime]:
 
 def _is_sports(settings: BotSettings, m: Dict[str, Any]) -> bool:
     ticker = str(m.get("ticker", "")).upper()
-    if settings.sports.exclude_multigame_extended and "MULTIGAMEEXTENDED" in ticker:
+    if getattr(settings.sports, "exclude_multigame_extended", False) and "MULTIGAMEEXTENDED" in ticker:
         return False
     if getattr(settings.sports, "market_universe", "sports") == "all":
         return True
