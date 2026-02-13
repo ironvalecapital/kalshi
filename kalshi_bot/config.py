@@ -50,10 +50,10 @@ class DataConfig(BaseModel):
 
 class WeatherConfig(BaseModel):
     forecast_sigma_f: float = 2.0
-    min_fill_prob: float = 0.003
-    max_spread_cents: float = 95.0
-    min_edge_after_fees_cents: float = 0.0
-    entry_edge_pp: float = 3.0
+    min_fill_prob: float = 0.001
+    max_spread_cents: float = 99.0
+    min_edge_after_fees_cents: float = -0.05
+    entry_edge_pp: float = 1.0
     exit_edge_pp: float = 45.0
     min_time_to_close_hours: float = 0.5
     max_time_to_close_hours: float = 168.0
@@ -182,7 +182,7 @@ class SportsConfig(BaseModel):
     min_trades_60m: int = 0
     min_trades_5m: int = 0
     min_top_depth: int = 0
-    min_ev_cents: float = 0.05
+    min_ev_cents: float = 0.0
     extreme_edge_cents: float = 6.0
     urgency_window_sec: int = 300
     min_order_interval_sec: int = 3
@@ -203,7 +203,7 @@ class SportsConfig(BaseModel):
     daily_report_interval_sec: int = 3600
     stale_order_max_age_sec: int = 300
     stale_order_cancel_edge_cents: float = 0.1
-    min_spread_cents: int = 1
+    min_spread_cents: int = 0
     avoid_price_low_cents: int = 2
     avoid_price_high_cents: int = 98
     depth_size_divisor: int = 5
@@ -211,7 +211,7 @@ class SportsConfig(BaseModel):
     allow_arb_taker: bool = True
     spread_scan_weight: float = 1.0
     simple_active_maker: bool = True
-    simple_min_spread_cents: int = 1
+    simple_min_spread_cents: int = 0
     simple_imbalance_min: float = 0.03
     simple_ladder_levels: int = 3
     use_spread_scanner: bool = True

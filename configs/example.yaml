@@ -15,10 +15,10 @@ rate_limit:
 weather:
   statuses: ["open"]
   forecast_sigma_f: 2.0
-  min_fill_prob: 0.003
-  max_spread_cents: 95.0
-  min_edge_after_fees_cents: 0.0
-  entry_edge_pp: 3.0
+  min_fill_prob: 0.001
+  max_spread_cents: 99.0
+  min_edge_after_fees_cents: -0.05
+  entry_edge_pp: 1.0
   exit_edge_pp: 45.0
   min_time_to_close_hours: 0.5
   max_time_to_close_hours: 168.0
@@ -96,7 +96,7 @@ sports:
   min_trades_60m: 0
   min_trades_5m: 0
   min_top_depth: 0
-  min_ev_cents: 0.05
+  min_ev_cents: 0.0
   extreme_edge_cents: 6.0
   urgency_window_sec: 300
   min_order_interval_sec: 3
@@ -116,7 +116,7 @@ sports:
   daily_report_interval_sec: 3600
   stale_order_max_age_sec: 300
   stale_order_cancel_edge_cents: 0.1
-  min_spread_cents: 1
+  min_spread_cents: 0
   avoid_price_low_cents: 2
   avoid_price_high_cents: 98
   depth_size_divisor: 5
@@ -124,7 +124,7 @@ sports:
   allow_arb_taker: true
   spread_scan_weight: 1.0
   simple_active_maker: true
-  simple_min_spread_cents: 1
+  simple_min_spread_cents: 0
   simple_imbalance_min: 0.03
   simple_ladder_levels: 3
   use_spread_scanner: true
