@@ -265,7 +265,7 @@ def run_sports_strategy(
             forced_idx += 1
             pick = type("Pick", (), {"ticker": forced_ticker, "event_ticker": ""})()
         else:
-            if family in {"crypto", "finance"}:
+            if family in {"all", "crypto", "finance"}:
                 tape_ticker = _auto_pick_from_tape(settings, data_client, family=family)
                 if tape_ticker and _has_actionable_quotes(data_client, tape_ticker):
                     pick = type("Pick", (), {"ticker": tape_ticker, "event_ticker": ""})()

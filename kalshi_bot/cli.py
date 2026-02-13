@@ -48,6 +48,7 @@ from .execution_manager import maker_ladder_cycle
 from .order_lifecycle import OrderLifecycle
 from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
+from .alerts import send_telegram
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -204,12 +205,16 @@ def hot_tickers(
 
     table = Table(title="Hot Tickers (Live Tape)")
     table.add_column("Ticker")
+    table.add_column("Status")
     table.add_column("Trades")
     table.add_column("YesBid")
     table.add_column("YesAsk")
     table.add_column("Spread")
     for ticker, n in counts.most_common(top):
         m = data_client.get_market(ticker)
+        status = str(m.get("status", "")).lower()
+        if status and status not in {"open", "unopened"}:
+            continue
         yes_bid = m.get("yes_bid")
         no_bid = m.get("no_bid")
         if yes_bid is None and no_bid is None:
@@ -224,6 +229,7 @@ def hot_tickers(
         spread = (yes_ask - yes_bid) if yes_ask is not None and yes_bid is not None else None
         table.add_row(
             ticker,
+            status or "",
             str(n),
             "" if yes_bid is None else str(yes_bid),
             "" if yes_ask is None else str(yes_ask),
@@ -239,6 +245,7 @@ def hot_edge(
     max_pages: int = typer.Option(8, help="Max pages to read"),
     family: str = typer.Option("auto", help="auto|all|sports|crypto|finance"),
     count: int = typer.Option(5, help="Contracts for fee/EV estimation"),
+    notify: bool = typer.Option(False, help="Send top scan summary to Telegram"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
     settings = build_settings(config)
@@ -274,6 +281,9 @@ def hot_edge(
         rows_local: list[dict[str, Any]] = []
         for ticker, n in counts.most_common(max(top * 3, 40)):
             m = data_client.get_market(ticker)
+            status = str(m.get("status", "")).lower()
+            if status and status not in {"open", "unopened"}:
+                continue
             ob = data_client.get_orderbook(ticker)
             yes_bids = ob.get("yes", []) or []
             no_bids = ob.get("no", []) or []
@@ -317,6 +327,7 @@ def hot_edge(
                 {
                     "ticker": ticker,
                     "family": fam,
+                    "status": status or "",
                     "trades": n,
                     "yes_bid": yes_bid,
                     "yes_ask": yes_ask,
@@ -352,12 +363,16 @@ def hot_edge(
         if counts:
             debug = Table(title="Hot Tape (No Actionable Quotes Yet)")
             debug.add_column("Ticker")
+            debug.add_column("Status")
             debug.add_column("Trades")
             debug.add_column("YesBid")
             debug.add_column("NoBid")
             shown = 0
             for ticker, n in counts.most_common(top):
                 m = data_client.get_market(ticker)
+                status = str(m.get("status", "")).lower()
+                if status and status not in {"open", "unopened"}:
+                    continue
                 ob = data_client.get_orderbook(ticker)
                 yes_levels = ob.get("yes", []) or []
                 no_levels = ob.get("no", []) or []
@@ -365,6 +380,7 @@ def hot_edge(
                 no_bid = no_levels[0][0] if no_levels else m.get("no_bid")
                 debug.add_row(
                     ticker,
+                    status or "",
                     str(n),
                     "" if yes_bid is None else str(yes_bid),
                     "" if no_bid is None else str(no_bid),
@@ -379,6 +395,7 @@ def hot_edge(
     table = Table(title="Hot Edge Rank (Tape + Queue + Fees)")
     table.add_column("Ticker")
     table.add_column("Family")
+    table.add_column("Status")
     table.add_column("Trades")
     table.add_column("YesBid")
     table.add_column("YesAsk")
@@ -391,6 +408,7 @@ def hot_edge(
         table.add_row(
             r["ticker"],
             r["family"],
+            r["status"],
             str(r["trades"]),
             str(r["yes_bid"]),
             str(r["yes_ask"]),
@@ -403,6 +421,13 @@ def hot_edge(
         if shown >= top:
             break
     console.print(table)
+    if notify:
+        lines = []
+        for r in rows[: min(top, 10)]:
+            lines.append(
+                f"{r['ticker']} | {r['family']} | tr={r['trades']} | spr={r['spread']} | ev={r['ev_exec']:.2f}"
+            )
+        send_telegram("Kalshi hot-edge scan", {"top": lines, "family": family})
 
 
 @app.command()
@@ -735,11 +760,15 @@ def run_sports(
             "Live trading requires KALSHI_ARM_LIVE=1. "
             "Run `export KALSHI_ARM_LIVE=1` first or pass `--arm-live`."
         )
-    settings = build_settings(config)
     family = _normalize_family(family)
     market_list = [t.strip() for t in (markets or "").split(",") if t.strip()]
     if market and market not in market_list:
         market_list.append(market)
+    # Keep live loop responsive under API throttling.
+    settings = build_settings(config)
+    settings.sports.top_n = min(settings.sports.top_n, 60)
+    settings.sports.max_scan_markets = min(settings.sports.max_scan_markets, 400)
+    settings.sports.orderbook_probe_limit = min(settings.sports.orderbook_probe_limit, 80)
     settings.data.env = "prod" if live else "demo"
     console.print("DEMO MODE" if not live else "LIVE MODE")
     _, data_client = build_clients(settings)
