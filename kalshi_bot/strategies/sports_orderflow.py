@@ -34,6 +34,17 @@ def _fill_prob(depth: int, spread: int, trade_rate: float) -> float:
     return _sigmoid(x)
 
 
+def _fill_prob_queue(queue_ahead: int, trades_5m: int, spread: int, horizon_sec: int = 60) -> float:
+    # Queue-aware fill proxy:
+    # expected queue consumption scales with recent tape flow and tighter spread.
+    trade_rate_sec = max(0.0, float(trades_5m) / 300.0)
+    aggressiveness = max(0.2, 1.4 - 0.08 * float(max(0, spread)))
+    expected_consumption = trade_rate_sec * float(horizon_sec) * aggressiveness
+    q = max(0.0, float(queue_ahead))
+    p = 1.0 - math.exp(-expected_consumption / (q + 1.0))
+    return max(0.0, min(1.0, p))
+
+
 def _probability_uncertainty(
     trades_60m: int,
     depth_top3: int,
@@ -417,7 +428,10 @@ def run_sports_strategy(
         fee = fee_cents(1, yes_ask or 0, maker=True)
         ev_after = edge_cents - fee
 
-        fill_prob = _fill_prob(depth, spread, trades_5m / 5.0)
+        queue_ahead_guess = max(1, depth_yes if edge_cents >= 0 else depth_no)
+        fill_prob = _fill_prob_queue(queue_ahead_guess, trades_5m, spread, horizon_sec=max(30, sleep_s * 3))
+        if fill_prob <= 0:
+            fill_prob = _fill_prob(depth, spread, trades_5m / 5.0)
         ev_exec = ev_after * fill_prob
         action = "ABSTAIN"
         yes_pos, no_pos = _position_counts(data_client, pick.ticker)
@@ -545,17 +559,29 @@ def run_sports_strategy(
                         price_level = price - level
                         if price_level <= 0:
                             break
+                        queue_ahead_level = 0
+                        if ob_state is not None:
+                            if action == "BID_YES":
+                                queue_ahead_level = int(ob_state.yes_bids.get(price_level, 0))
+                            else:
+                                queue_ahead_level = int(ob_state.no_bids.get(price_level, 0))
+                        else:
+                            queue_ahead_level = depth_yes if action == "BID_YES" else depth_no
+                        level_fill_prob = _fill_prob_queue(queue_ahead_level, trades_5m, spread, horizon_sec=max(30, sleep_s * 3))
+                        if level_fill_prob < min_fill_prob:
+                            continue
                         if settings.sports.maker_only:
                             if action == "BID_YES" and yes_ask is not None and price_level >= yes_ask:
                                 continue
                             if action == "BID_NO" and no_ask is not None and price_level >= no_ask:
                                 continue
+                        level_count = max(1, int((size / ladder_levels) * max(0.5, min(1.0, level_fill_prob + 0.1))))
                         order = OrderRequest(
                             market_id=pick.ticker,
                             side="yes" if action == "BID_YES" else "no",
                             action="buy",
                             price_cents=price_level,
-                            count=max(1, size // ladder_levels),
+                            count=level_count,
                             client_order_id=f"sports-{int(time.time())}-{level}",
                         )
                         order_result = exec_engine.place_order(order)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 import json
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -63,6 +64,14 @@ def _ticker_family_match(ticker: str, family: str) -> bool:
         "finance": ("CPI", "FED", "RATE", "INFLATION", "FINANCE", "SPX", "DJIA", "NASDAQ"),
     }
     return any(tok in t for tok in rules.get(fam, ()))
+
+
+def _queue_fill_prob(queue_ahead: int, trades_5m: int, spread: float, horizon_sec: int = 60) -> float:
+    trade_rate_sec = max(0.0, float(trades_5m) / 300.0)
+    aggressiveness = max(0.2, 1.4 - 0.08 * max(0.0, float(spread)))
+    expected = trade_rate_sec * float(horizon_sec) * aggressiveness
+    q = max(0.0, float(queue_ahead))
+    return max(0.0, min(1.0, 1.0 - math.exp(-expected / (q + 1.0))))
 
 
 def build_settings(config_path: Optional[str]) -> BotSettings:
@@ -207,6 +216,132 @@ def hot_tickers(
             "" if yes_ask is None else str(yes_ask),
             "" if spread is None else str(spread),
         )
+    console.print(table)
+
+
+@app.command()
+def hot_edge(
+    top: int = typer.Option(20, help="Top N edge-ranked tickers from live tape"),
+    limit: int = typer.Option(300, help="Trades page size"),
+    max_pages: int = typer.Option(8, help="Max pages to read"),
+    family: str = typer.Option("all", help="all|sports|crypto|finance"),
+    count: int = typer.Option(5, help="Contracts for fee/EV estimation"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    family = (family or "all").lower().strip()
+    if family not in {"all", "sports", "crypto", "finance"}:
+        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
+
+    # Gather a recent tape window.
+    tape: list[dict] = []
+    cursor: Optional[str] = None
+    pages = 0
+    while pages < max_pages:
+        resp = data_client.get_trades(limit=limit, cursor=cursor)
+        chunk = resp.get("trades", []) or []
+        if not chunk:
+            break
+        tape.extend(chunk)
+        cursor = resp.get("cursor")
+        pages += 1
+        if not cursor:
+            break
+
+    counts: Counter[str] = Counter()
+    for tr in tape:
+        ticker = str(tr.get("ticker", "")).upper()
+        if not ticker:
+            continue
+        if not _ticker_family_match(ticker, family):
+            continue
+        if "MULTIGAMEEXTENDED" in ticker or "QUICKSETTLE" in ticker:
+            continue
+        counts[ticker] += 1
+    if not counts:
+        console.print("No hot tickers found for this family.")
+        raise typer.Exit(0)
+
+    rows: list[dict[str, Any]] = []
+    for ticker, n in counts.most_common(max(top * 3, 40)):
+        m = data_client.get_market(ticker)
+        ob = data_client.get_orderbook(ticker)
+        yes_bids = ob.get("yes", []) or []
+        no_bids = ob.get("no", []) or []
+        yes_bid = yes_bids[0][0] if yes_bids else m.get("yes_bid")
+        no_bid = no_bids[0][0] if no_bids else m.get("no_bid")
+        yes_ask = 100 - no_bid if no_bid is not None else m.get("yes_ask")
+        if yes_bid is None or yes_ask is None:
+            continue
+        spread = yes_ask - yes_bid
+        if spread < 0:
+            continue
+        depth_yes = sum(int(level[1]) for level in yes_bids[:3]) if yes_bids else 0
+        # Side-inference from taker side when present.
+        signed = 0.0
+        trades_5m = 0
+        for tr in tape:
+            if str(tr.get("ticker", "")).upper() != ticker:
+                continue
+            side = str(tr.get("taker_side") or tr.get("side") or "").lower()
+            size = float(tr.get("count") or 0)
+            if side == "yes":
+                signed += size
+            elif side == "no":
+                signed -= size
+            trades_5m += 1
+        p_implied = yes_ask / 100.0
+        # Conservative tape prior; not a forecast truth.
+        tape_tilt = max(-0.05, min(0.05, signed / max(1.0, float(n) * 20.0)))
+        p_model = max(0.01, min(0.99, p_implied + tape_tilt))
+        edge_cents = (p_model - p_implied) * 100.0
+        fee_total = estimate_fee_cents(count=count, price_cents=int(yes_bid + 1), maker=True, maker_rate=settings.execution.maker_fee_rate, taker_rate=settings.execution.taker_fee_rate)
+        fee_per = fee_total / max(1, count)
+        queue_ahead = int(yes_bids[0][1]) if yes_bids else max(1, depth_yes)
+        fill_prob = _queue_fill_prob(queue_ahead=queue_ahead, trades_5m=trades_5m, spread=spread, horizon_sec=60)
+        ev_cents = (edge_cents - fee_per) * fill_prob
+        rows.append(
+            {
+                "ticker": ticker,
+                "trades": n,
+                "yes_bid": yes_bid,
+                "yes_ask": yes_ask,
+                "spread": spread,
+                "edge": edge_cents,
+                "fill_prob": fill_prob,
+                "ev_exec": ev_cents,
+            }
+        )
+
+    rows.sort(key=lambda r: r["ev_exec"], reverse=True)
+    if not rows:
+        console.print("No edge-ranked rows yet (likely no actionable bid/ask on recent tape for this family).")
+        raise typer.Exit(0)
+    table = Table(title="Hot Edge Rank (Tape + Queue + Fees)")
+    table.add_column("Ticker")
+    table.add_column("Trades")
+    table.add_column("YesBid")
+    table.add_column("YesAsk")
+    table.add_column("Spread")
+    table.add_column("Edge(c)")
+    table.add_column("FillProb")
+    table.add_column("EVexec(c)")
+    shown = 0
+    for r in rows:
+        table.add_row(
+            r["ticker"],
+            str(r["trades"]),
+            str(r["yes_bid"]),
+            str(r["yes_ask"]),
+            str(r["spread"]),
+            f"{r['edge']:.2f}",
+            f"{r['fill_prob']:.2f}",
+            f"{r['ev_exec']:.2f}",
+        )
+        shown += 1
+        if shown >= top:
+            break
     console.print(table)
 
 
