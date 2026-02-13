@@ -26,6 +26,31 @@ class SportsCandidate:
     liquidity_score: float
 
 
+@dataclass
+class SportsDiagnostic:
+    ticker: str
+    title: str
+    family: str
+    reason: str
+    best_yes_bid: Optional[int]
+    best_yes_ask: Optional[int]
+    best_no_bid: Optional[int]
+    best_no_ask: Optional[int]
+    spread_yes: Optional[int]
+    depth_top3: int
+    trades_60m: int
+    liquidity_score: float
+
+
+def _is_excluded_ticker(settings: BotSettings, ticker: str) -> bool:
+    t = (ticker or "").upper()
+    if getattr(settings.sports, "exclude_multigame_extended", False) and "MULTIGAMEEXTENDED" in t:
+        return True
+    if getattr(settings.sports, "exclude_quicksettle", False) and "QUICKSETTLE" in t:
+        return True
+    return False
+
+
 def _close_time(market: Dict[str, Any]) -> Optional[datetime]:
     raw = market.get("close_time") or market.get("close_ts")
     if raw is None:
@@ -37,7 +62,7 @@ def _close_time(market: Dict[str, Any]) -> Optional[datetime]:
 
 def _is_sports(settings: BotSettings, m: Dict[str, Any]) -> bool:
     ticker = str(m.get("ticker", "")).upper()
-    if getattr(settings.sports, "exclude_multigame_extended", False) and "MULTIGAMEEXTENDED" in ticker:
+    if _is_excluded_ticker(settings, ticker):
         return False
     if getattr(settings.sports, "market_universe", "sports") == "all":
         return True
@@ -45,6 +70,21 @@ def _is_sports(settings: BotSettings, m: Dict[str, Any]) -> bool:
         return True
     text = " ".join([str(m.get("title", "")), str(m.get("subtitle", "")), str(m.get("series_ticker", ""))]).upper()
     return any(k in text for k in settings.sports.keywords)
+
+
+def _matches_family(m: Dict[str, Any], family: str) -> bool:
+    fam = (family or "all").lower()
+    if fam == "all":
+        return True
+    text = " ".join(
+        [str(m.get("ticker", "")), str(m.get("title", "")), str(m.get("subtitle", "")), str(m.get("series_ticker", ""))]
+    ).upper()
+    rules = {
+        "sports": ["SPORT", "NBA", "NFL", "NHL", "MLB", "NCAA", "MATCH", "GAME"],
+        "crypto": ["BTC", "ETH", "CRYPTO"],
+        "finance": ["FED", "CPI", "RATE", "INFLATION", "NASDAQ", "SPX", "DJIA", "FINANCE"],
+    }
+    return any(tok in text for tok in rules.get(fam, []))
 
 
 def _orderbook_complement(ob: Dict[str, Any]) -> Dict[str, Optional[int]]:
@@ -69,6 +109,42 @@ def _orderbook_complement(ob: Dict[str, Any]) -> Dict[str, Optional[int]]:
     }
 
 
+def _summary_quotes(m: Dict[str, Any]) -> Dict[str, Optional[int]]:
+    yes_bid = m.get("yes_bid")
+    no_bid = m.get("no_bid")
+    yes_ask = m.get("yes_ask")
+    no_ask = m.get("no_ask")
+    if yes_ask is None and no_bid is not None:
+        yes_ask = 100 - no_bid
+    if no_ask is None and yes_bid is not None:
+        no_ask = 100 - yes_bid
+    spread_yes = (yes_ask - yes_bid) if yes_ask is not None and yes_bid is not None else None
+    return {
+        "best_yes_bid": yes_bid,
+        "best_yes_ask": yes_ask,
+        "best_no_bid": no_bid,
+        "best_no_ask": no_ask,
+        "spread_yes": spread_yes,
+        "depth_top3": 0,
+    }
+
+
+def _is_actionable_quote(settings: BotSettings, prices: Dict[str, Optional[int]]) -> bool:
+    yes_bid = prices.get("best_yes_bid")
+    no_bid = prices.get("best_no_bid")
+    spread = prices.get("spread_yes")
+    min_bid = int(getattr(settings.sports, "min_quote_bid_cents", 2))
+    max_spread = int(getattr(settings.sports, "max_quote_spread_cents", 30))
+    if yes_bid is None and no_bid is None:
+        return False
+    # Reject dead 0/100 books and extremely wide quotes.
+    if (yes_bid is not None and yes_bid <= 1) and (no_bid is not None and no_bid <= 1):
+        return False
+    if spread is not None and spread > max_spread:
+        return False
+    return (yes_bid is not None and yes_bid >= min_bid) or (no_bid is not None and no_bid >= min_bid)
+
+
 def _count_trades(trades: List[Dict[str, Any]], since: datetime) -> int:
     count = 0
     for t in trades:
@@ -84,7 +160,16 @@ def _count_trades(trades: List[Dict[str, Any]], since: datetime) -> int:
     return count
 
 
-def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient, top_n: int) -> List[SportsCandidate]:
+def pick_sports_candidates(
+    settings: BotSettings,
+    data_client: KalshiDataClient,
+    top_n: int,
+    family: str = "all",
+) -> List[SportsCandidate]:
+    family = (family or "all").lower().strip()
+    if family not in {"all", "sports", "crypto", "finance"}:
+        family = "all"
+
     markets: List[Dict[str, Any]] = []
     allowed_statuses = {"open", "closed", "settled", "unopened"}
     statuses = [s for s in (getattr(settings.sports, "statuses", None) or ["open"]) if s in allowed_statuses]
@@ -117,45 +202,25 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
     candidates: List[SportsCandidate] = []
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    def _summary_quotes(m: Dict[str, Any]) -> Dict[str, Optional[int]]:
-        yes_bid = m.get("yes_bid")
-        no_bid = m.get("no_bid")
-        yes_ask = m.get("yes_ask")
-        no_ask = m.get("no_ask")
-        if yes_ask is None and no_bid is not None:
-            yes_ask = 100 - no_bid
-        if no_ask is None and yes_bid is not None:
-            no_ask = 100 - yes_bid
-        spread_yes = (yes_ask - yes_bid) if yes_ask is not None and yes_bid is not None else None
-        return {
-            "best_yes_bid": yes_bid,
-            "best_yes_ask": yes_ask,
-            "best_no_bid": no_bid,
-            "best_no_ask": no_ask,
-            "spread_yes": spread_yes,
-            "depth_top3": 0,
-        }
-
     def fetch_one(m: Dict[str, Any]) -> Optional[SportsCandidate]:
-        if not _is_sports(settings, m) and not settings.sports.allow_unmatched_markets:
+        if not _matches_family(m, family):
+            return None
+        # Keep sports keyword gating only for sports/all mode.
+        # When family is crypto/finance, rely on explicit family filter instead.
+        if family in {"sports", "all"} and not _is_sports(settings, m) and not settings.sports.allow_unmatched_markets:
             return None
         ob = data_client.get_orderbook(m.get("ticker"))
         prices = _orderbook_complement(ob)
         if prices["spread_yes"] is None:
             prices = _summary_quotes(m)
-        if prices["spread_yes"] is None and prices["best_yes_bid"] is None and prices["best_no_bid"] is None:
+        if not _is_actionable_quote(settings, prices):
             return None
         trades_resp = data_client.get_trades(ticker=m.get("ticker"), limit=200)
         trades = trades_resp.get("trades", [])
         trades_60m = _count_trades(trades, now - timedelta(minutes=60))
         trades_5m = _count_trades(trades, now - timedelta(minutes=5))
         ticker = str(m.get("ticker", "")).upper()
-        if (
-            "MULTIGAMEEXTENDED" in ticker
-            and (prices["spread_yes"] is None or prices["spread_yes"] == 0)
-            and prices["depth_top3"] <= 0
-            and trades_60m <= 0
-        ):
+        if _is_excluded_ticker(settings, ticker):
             return None
         spread_for_score = prices["spread_yes"] if prices["spread_yes"] is not None else 0
         liquidity_score = 1.0 * trades_60m + 0.5 * trades_5m + 0.1 * prices["depth_top3"] - 0.7 * spread_for_score
@@ -175,32 +240,65 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
             liquidity_score=liquidity_score,
         )
 
-    for m in markets:
-        if not _is_sports(settings, m) and not settings.sports.allow_unmatched_markets:
-            continue
-        pass
-
     with ThreadPoolExecutor(max_workers=max(1, settings.sports.selector_workers)) as executor:
         futures = [executor.submit(fetch_one, m) for m in probe_markets]
         for fut in as_completed(futures):
             cand = fut.result()
             if cand is None:
                 continue
-            if "MULTIGAMEEXTENDED" in str(cand.ticker).upper():
+            if _is_excluded_ticker(settings, str(cand.ticker)):
                 continue
             candidates.append(cand)
-    if not candidates and getattr(settings.sports, "market_universe", "sports") == "all":
-        fallback_queries = ["BTC", "ETH", "NBA", "NFL", "NCAA", "CPI", "FED", "RATE", "FINANCE"]
+    # Fallback 1: use summary quotes from already scanned markets.
+    if not candidates:
+        summary_candidates: List[SportsCandidate] = []
+        for m in probe_markets:
+            if not _matches_family(m, family):
+                continue
+            ticker = str(m.get("ticker", "")).upper()
+            if _is_excluded_ticker(settings, ticker):
+                continue
+            prices = _summary_quotes(m)
+            if not _is_actionable_quote(settings, prices):
+                continue
+            spread_for_score = prices["spread_yes"] if prices["spread_yes"] is not None else 0
+            summary_candidates.append(
+                SportsCandidate(
+                    ticker=m.get("ticker"),
+                    title=m.get("title", ""),
+                    event_ticker=m.get("event_ticker", "") or m.get("event_id", "") or "",
+                    close_time=_close_time(m),
+                    best_yes_bid=prices["best_yes_bid"],
+                    best_yes_ask=prices["best_yes_ask"],
+                    best_no_bid=prices["best_no_bid"],
+                    best_no_ask=prices["best_no_ask"],
+                    spread_yes=prices["spread_yes"],
+                    trades_60m=0,
+                    trades_5m=0,
+                    depth_top3=0,
+                    liquidity_score=-0.7 * spread_for_score,
+                )
+            )
+        if summary_candidates:
+            summary_candidates.sort(key=lambda c: c.liquidity_score, reverse=True)
+            return summary_candidates[:top_n]
+    if not candidates:
+        fallback_queries = {
+            "all": ["BTC", "ETH", "NBA", "NFL", "NCAA", "CPI", "FED", "RATE", "FINANCE"],
+            "sports": ["NBA", "NFL", "NCAA", "SOCCER", "MATCH"],
+            "crypto": ["BTC", "ETH", "CRYPTO"],
+            "finance": ["CPI", "FED", "RATE", "INFLATION", "FINANCE"],
+        }.get(family, ["BTC", "ETH", "NBA", "NFL", "CPI", "FED"])
         for q in fallback_queries:
             try:
                 resp = data_client.list_markets(query=q, status="open", limit=100)
             except Exception:
                 continue
             for m in resp.get("markets", []):
-                if "MULTIGAMEEXTENDED" in str(m.get("ticker", "")).upper():
+                if _is_excluded_ticker(settings, str(m.get("ticker", ""))):
                     continue
                 quotes = _summary_quotes(m)
-                if quotes["best_yes_bid"] is None and quotes["best_no_bid"] is None:
+                if not _is_actionable_quote(settings, quotes):
                     continue
                 spread_for_score = quotes["spread_yes"] if quotes["spread_yes"] is not None else 0
                 cand = SportsCandidate(
@@ -225,3 +323,64 @@ def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient,
                 break
     candidates.sort(key=lambda c: c.liquidity_score, reverse=True)
     return candidates[:top_n]
+
+
+def diagnose_sports_markets(
+    settings: BotSettings,
+    data_client: KalshiDataClient,
+    top_n: int,
+    family: str = "all",
+) -> List[SportsDiagnostic]:
+    family = (family or "all").lower().strip()
+    if family not in {"all", "sports", "crypto", "finance"}:
+        family = "all"
+    statuses = [s for s in (getattr(settings.sports, "statuses", None) or ["open"]) if s in {"open", "unopened"}]
+    if not statuses:
+        statuses = ["open"]
+
+    markets: List[Dict[str, Any]] = []
+    for status in statuses:
+        resp = data_client.list_markets(status=status, limit=min(1000, settings.sports.max_scan_markets))
+        markets.extend(resp.get("markets", []))
+        if len(markets) >= settings.sports.max_scan_markets:
+            break
+    markets = sorted(
+        markets,
+        key=lambda m: float(m.get("volume_24h", 0) or m.get("volume", 0) or 0),
+        reverse=True,
+    )[: settings.sports.orderbook_probe_limit]
+
+    out: List[SportsDiagnostic] = []
+    now = datetime.now(timezone.utc)
+    for m in markets:
+        ticker = str(m.get("ticker", "")).upper()
+        reason = "ok"
+        if not _matches_family(m, family):
+            reason = "family_mismatch"
+        elif family in {"sports", "all"} and not _is_sports(settings, m) and not settings.sports.allow_unmatched_markets:
+            reason = "sports_filter"
+        elif _is_excluded_ticker(settings, ticker):
+            reason = "excluded_ticker"
+        prices = _summary_quotes(m)
+        spread = prices["spread_yes"]
+        if reason == "ok" and not _is_actionable_quote(settings, prices):
+            reason = "no_actionable_quotes"
+        spread_for_score = spread if spread is not None else 0
+        out.append(
+            SportsDiagnostic(
+                ticker=m.get("ticker", ""),
+                title=m.get("title", ""),
+                family=family,
+                reason=reason,
+                best_yes_bid=prices["best_yes_bid"],
+                best_yes_ask=prices["best_yes_ask"],
+                best_no_bid=prices["best_no_bid"],
+                best_no_ask=prices["best_no_ask"],
+                spread_yes=spread,
+                depth_top3=0,
+                trades_60m=0,
+                liquidity_score=-0.7 * spread_for_score + float(m.get("volume_24h", 0) or 0) * 0.001,
+            )
+        )
+    out.sort(key=lambda r: (r.reason != "ok", -r.liquidity_score))
+    return out[:top_n]

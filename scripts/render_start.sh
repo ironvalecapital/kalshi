@@ -8,4 +8,4 @@ if [ -n "${KALSHI_PRIVATE_KEY_PEM:-}" ]; then
   export KALSHI_PRIVATE_KEY_PATH="$KEY_PATH"
 fi
 
-python -m kalshi_bot.cli run-weather --live --i-understand-risk --cycles 0 --sleep 10
+python -m kalshi_bot.cli run-weather --live --i-understand-risk --cycles 0 --sleep 15

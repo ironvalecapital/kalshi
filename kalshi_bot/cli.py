@@ -27,7 +27,7 @@ from .market_scanner import scan_markets as scan_markets_fn
 from .models.bayes_prior import bayes_update, choose_prior
 from .models.consistency import check_consistency
 from .models.microstructure import adjust_for_event_time
-from .market_selector import pick_sports_candidates
+from .market_selector import diagnose_sports_markets, pick_sports_candidates
 from .orderbook_live import LiveOrderbook
 from .flow_features import FlowFeatures
 from .strategies.sports_orderflow import run_sports_strategy
@@ -179,6 +179,7 @@ def pick_weather(
 @app.command()
 def pick_sports(
     top: int = typer.Option(20, help="Top N"),
+    family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
 ):
     settings = build_settings(config)
@@ -186,7 +187,10 @@ def pick_sports(
     settings.sports.orderbook_probe_limit = min(settings.sports.orderbook_probe_limit, max(20, top * 2))
     settings.sports.selector_workers = 1
     _, data_client = build_clients(settings)
-    candidates = pick_sports_candidates(settings, data_client, top_n=top)
+    family = (family or "all").lower().strip()
+    if family not in {"all", "sports", "crypto", "finance"}:
+        raise typer.BadParameter("--family must be one of: all, sports, crypto, finance")
+    candidates = pick_sports_candidates(settings, data_client, top_n=top, family=family)
     if not candidates:
         console.print("No suitable sports markets found.")
         raise typer.Exit(0)
@@ -197,6 +201,43 @@ def pick_sports(
     table.add_column("DepthTop3")
     for c in candidates:
         table.add_row(c.ticker, str(c.spread_yes), str(c.trades_60m), str(c.depth_top3))
+    console.print(table)
+
+
+@app.command()
+def pick_markets(
+    top: int = typer.Option(30, help="Top N"),
+    family: str = typer.Option("all", help="Market family: all|sports|crypto|finance"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    settings.sports.orderbook_probe_limit = min(settings.sports.orderbook_probe_limit, max(30, top * 2))
+    settings.sports.selector_workers = 1
+    _, data_client = build_clients(settings)
+    rows = diagnose_sports_markets(settings, data_client, top_n=top, family=family)
+    if not rows:
+        console.print("No markets returned.")
+        raise typer.Exit(0)
+    table = Table(title="Market Diagnostics")
+    table.add_column("Ticker")
+    table.add_column("Reason")
+    table.add_column("YesBid")
+    table.add_column("YesAsk")
+    table.add_column("NoBid")
+    table.add_column("NoAsk")
+    table.add_column("Spread")
+    table.add_column("Score")
+    for r in rows:
+        table.add_row(
+            r.ticker,
+            r.reason,
+            "" if r.best_yes_bid is None else str(r.best_yes_bid),
+            "" if r.best_yes_ask is None else str(r.best_yes_ask),
+            "" if r.best_no_bid is None else str(r.best_no_bid),
+            "" if r.best_no_ask is None else str(r.best_no_ask),
+            "" if r.spread_yes is None else str(r.spread_yes),
+            f"{r.liquidity_score:.2f}",
+        )
     console.print(table)
 
 
