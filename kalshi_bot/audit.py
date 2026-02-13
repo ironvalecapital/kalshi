@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
@@ -23,6 +24,9 @@ class AuditLogger:
             "context": context,
         }
         self.ledger.record_audit(event_type, message, context)
+        if os.getenv("KALSHI_STDOUT_EVENTS", "0").lower() in {"1", "true", "yes"}:
+            if event_type in {"mode", "decision", "order", "cancel", "error", "kill"}:
+                print(json.dumps(entry), flush=True)
         if event_type in {"order", "cancel", "kill", "error"}:
             send_telegram(f"[{event_type}] {message}", context)
         with self.log_path.open("a", encoding="utf-8") as f:

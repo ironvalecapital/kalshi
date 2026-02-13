@@ -212,6 +212,12 @@ def hot_tickers(
         m = data_client.get_market(ticker)
         yes_bid = m.get("yes_bid")
         no_bid = m.get("no_bid")
+        if yes_bid is None and no_bid is None:
+            ob = data_client.get_orderbook(ticker)
+            yes_levels = ob.get("yes", []) or []
+            no_levels = ob.get("no", []) or []
+            yes_bid = yes_levels[0][0] if yes_levels else None
+            no_bid = no_levels[0][0] if no_levels else None
         yes_ask = m.get("yes_ask")
         if yes_ask is None and no_bid is not None:
             yes_ask = 100 - no_bid
@@ -335,7 +341,40 @@ def hot_edge(
 
     rows.sort(key=lambda r: r["ev_exec"], reverse=True)
     if not rows:
+        # Fallback debug view to help user pick a real ticker quickly.
+        counts: Counter[str] = Counter()
+        for tr in tape:
+            ticker = str(tr.get("ticker", "")).upper()
+            if not ticker or "MULTIGAMEEXTENDED" in ticker or "QUICKSETTLE" in ticker:
+                continue
+            if _ticker_family_match(ticker, family):
+                counts[ticker] += 1
+        if counts:
+            debug = Table(title="Hot Tape (No Actionable Quotes Yet)")
+            debug.add_column("Ticker")
+            debug.add_column("Trades")
+            debug.add_column("YesBid")
+            debug.add_column("NoBid")
+            shown = 0
+            for ticker, n in counts.most_common(top):
+                m = data_client.get_market(ticker)
+                ob = data_client.get_orderbook(ticker)
+                yes_levels = ob.get("yes", []) or []
+                no_levels = ob.get("no", []) or []
+                yes_bid = yes_levels[0][0] if yes_levels else m.get("yes_bid")
+                no_bid = no_levels[0][0] if no_levels else m.get("no_bid")
+                debug.add_row(
+                    ticker,
+                    str(n),
+                    "" if yes_bid is None else str(yes_bid),
+                    "" if no_bid is None else str(no_bid),
+                )
+                shown += 1
+                if shown >= top:
+                    break
+            console.print(debug)
         console.print("No edge-ranked rows yet (likely no actionable bid/ask on recent tape for this family).")
+        console.print("Tip: run `python -m kalshi_bot.cli hot-tickers --top 50 --family auto --config configs/example.yaml` and watch one live ticker.")
         raise typer.Exit(0)
     table = Table(title="Hot Edge Rank (Tape + Queue + Fees)")
     table.add_column("Ticker")
@@ -675,18 +714,27 @@ def run_sports(
     demo: bool = typer.Option(True, help="Use demo environment"),
     live: bool = typer.Option(False, help="Use live environment"),
     i_understand_risk: bool = typer.Option(False, help="Confirm live trading"),
+    arm_live: bool = typer.Option(False, help="Set KALSHI_ARM_LIVE=1 for this run"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),
     cycles: int = typer.Option(1, help="Number of cycles"),
     sleep: int = typer.Option(10, help="Seconds between cycles"),
     market: Optional[str] = typer.Option(None, help="Override market ticker"),
     markets: Optional[str] = typer.Option(None, help="Comma-separated market tickers to run in rotation"),
     family: str = typer.Option("auto", help="Market family: auto|all|sports|crypto|finance"),
+    stdout_events: bool = typer.Option(True, help="Print decision/order events to stdout"),
 ):
     if live:
         demo = False
+    if arm_live:
+        os.environ["KALSHI_ARM_LIVE"] = "1"
+    if stdout_events:
+        os.environ["KALSHI_STDOUT_EVENTS"] = "1"
     ensure_demo_or_live(demo, live, i_understand_risk)
     if live and os.getenv("KALSHI_ARM_LIVE", "0") not in ("1", "true", "TRUE"):
-        raise typer.BadParameter("Live trading requires KALSHI_ARM_LIVE=1")
+        raise typer.BadParameter(
+            "Live trading requires KALSHI_ARM_LIVE=1. "
+            "Run `export KALSHI_ARM_LIVE=1` first or pass `--arm-live`."
+        )
     settings = build_settings(config)
     family = _normalize_family(family)
     market_list = [t.strip() for t in (markets or "").split(",") if t.strip()]
