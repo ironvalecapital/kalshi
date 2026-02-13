@@ -100,7 +100,8 @@ def _pick_best_by_spread(candidates: list) -> Optional[object]:
         return None
     def score(c):
         spread = c.spread_yes or 0
-        return (spread * 1.0) + (c.trades_60m * 0.1)
+        # Prefer tighter spread and stronger recent activity.
+        return (-spread * 1.0) + (c.trades_60m * 0.1)
     return max(candidates, key=score)
 
 
@@ -168,9 +169,9 @@ def run_sports_strategy(
                 except Exception:
                     pick = None
             auto_ticker = _auto_pick_from_summary(settings, data_client)
-            if auto_ticker:
+            if auto_ticker and pick is None:
                 pick = type("Pick", (), {"ticker": auto_ticker, "event_ticker": ""})()
-            else:
+            if pick is None:
                 candidates = pick_sports_candidates(settings, data_client, top_n=settings.sports.top_n)
                 if not candidates:
                     audit.log("decision", "no sports candidates", {})

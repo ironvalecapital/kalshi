@@ -84,7 +84,7 @@ def pick_weather_candidates(settings: BotSettings, data_client: KalshiDataClient
     max_close = now + timedelta(hours=settings.weather.max_time_to_close_hours)
     markets: List[Dict[str, Any]] = []
     max_scan = settings.weather.max_scan_markets
-    allowed_statuses = {"open", "closed", "settled"}
+    allowed_statuses = {"open", "closed", "settled", "unopened"}
     statuses = [s for s in (getattr(settings.weather, "statuses", None) or ["open"]) if s in allowed_statuses]
     if not statuses:
         statuses = ["open"]

@@ -26,14 +26,14 @@ def scan_spreads(
     settings: BotSettings,
     data_client: KalshiDataClient,
     top: int = 20,
-    min_spread: int = 2,
+    min_spread: int = 0,
     max_spread: int = 30,
     status: str = "open",
 ) -> List[SpreadCandidate]:
     markets: List[Dict[str, Any]] = []
     statuses = [status]
     if status == "open":
-        statuses.append("initialized")
+        statuses.append("unopened")
     for st in statuses:
         resp = data_client.list_markets(status=st, limit=1000)
         markets.extend(resp.get("markets", []))

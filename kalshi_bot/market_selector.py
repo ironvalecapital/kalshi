@@ -81,7 +81,7 @@ def _count_trades(trades: List[Dict[str, Any]], since: datetime) -> int:
 
 def pick_sports_candidates(settings: BotSettings, data_client: KalshiDataClient, top_n: int) -> List[SportsCandidate]:
     markets: List[Dict[str, Any]] = []
-    allowed_statuses = {"open", "closed", "settled"}
+    allowed_statuses = {"open", "closed", "settled", "unopened"}
     statuses = [s for s in (getattr(settings.sports, "statuses", None) or ["open"]) if s in allowed_statuses]
     if not statuses:
         statuses = ["open"]
