@@ -431,6 +431,34 @@ def hot_edge(
 
 
 @app.command()
+def scan_notify_loop(
+    interval: int = typer.Option(180, help="Seconds between scans"),
+    top: int = typer.Option(20, help="Top N rows"),
+    family: str = typer.Option("auto", help="auto|all|sports|crypto|finance"),
+    limit: int = typer.Option(300, help="Trades page size"),
+    max_pages: int = typer.Option(8, help="Max pages to read"),
+    count: int = typer.Option(5, help="Contracts for fee/EV estimate"),
+    notify_empty: bool = typer.Option(False, help="Send Telegram even when no actionable rows"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    while True:
+        try:
+            hot_edge(
+                top=top,
+                limit=limit,
+                max_pages=max_pages,
+                family=family,
+                count=count,
+                notify=True,
+                config=config,
+            )
+        except typer.Exit:
+            if notify_empty:
+                send_telegram("Kalshi scan: no actionable rows", {"family": family})
+        time.sleep(max(15, interval))
+
+
+@app.command()
 def watch(
     market: Optional[str] = typer.Option(None, help="Market ticker"),
     config: Optional[str] = typer.Option(None, help="Path to YAML config"),

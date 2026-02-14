@@ -253,6 +253,8 @@ def run_sports_strategy(
     if market_override and market_override not in forced_markets:
         forced_markets.append(market_override)
     forced_idx = 0
+    candidate_cache: dict[str, float] = {}
+    cache_ttl_sec = 900
 
     while True:
         if exec_engine._kill_switch():
@@ -263,12 +265,27 @@ def run_sports_strategy(
         if forced_markets:
             forced_ticker = forced_markets[forced_idx % len(forced_markets)]
             forced_idx += 1
-            pick = type("Pick", (), {"ticker": forced_ticker, "event_ticker": ""})()
+            if _has_actionable_quotes(data_client, forced_ticker):
+                pick = type("Pick", (), {"ticker": forced_ticker, "event_ticker": ""})()
+                candidate_cache[forced_ticker] = time.time()
+            else:
+                audit.log("decision", "forced market has no actionable quotes", {"market": forced_ticker})
         else:
+            # Reuse recently-actionable candidates first to reduce scan churn.
+            now_cache = time.time()
+            stale = [t for t, ts in candidate_cache.items() if now_cache - ts > cache_ttl_sec]
+            for tkr in stale:
+                candidate_cache.pop(tkr, None)
+            for tkr in list(candidate_cache.keys()):
+                if _has_actionable_quotes(data_client, tkr):
+                    pick = type("Pick", (), {"ticker": tkr, "event_ticker": ""})()
+                    candidate_cache[tkr] = now_cache
+                    break
             if family in {"all", "crypto", "finance"}:
                 tape_ticker = _auto_pick_from_tape(settings, data_client, family=family)
                 if tape_ticker and _has_actionable_quotes(data_client, tape_ticker):
                     pick = type("Pick", (), {"ticker": tape_ticker, "event_ticker": ""})()
+                    candidate_cache[tape_ticker] = time.time()
             if pick is None and settings.sports.use_spread_scanner:
                 try:
                     spreads = scan_spreads(
@@ -284,6 +301,7 @@ def run_sports_strategy(
                             continue
                         if _has_actionable_quotes(data_client, s.ticker):
                             pick = type("Pick", (), {"ticker": s.ticker, "event_ticker": ""})()
+                            candidate_cache[s.ticker] = time.time()
                             break
                 except Exception:
                     pick = None
@@ -295,6 +313,7 @@ def run_sports_strategy(
                 and _has_actionable_quotes(data_client, auto_ticker)
             ):
                 pick = type("Pick", (), {"ticker": auto_ticker, "event_ticker": ""})()
+                candidate_cache[auto_ticker] = time.time()
             if pick is None:
                 scan_top_n = settings.sports.crypto_top_n if family == "crypto" else settings.sports.top_n
                 candidates = pick_sports_candidates(settings, data_client, top_n=scan_top_n, family=family)
@@ -309,6 +328,7 @@ def run_sports_strategy(
                 for c in sorted(candidates, key=lambda x: x.liquidity_score, reverse=True):
                     if _has_actionable_quotes(data_client, c.ticker):
                         pick = c
+                        candidate_cache[c.ticker] = time.time()
                         break
                 if pick is None:
                     audit.log("decision", "no actionable quote candidates", {})
@@ -318,6 +338,14 @@ def run_sports_strategy(
                         if cycles <= 0:
                             break
                     continue
+        if pick is None:
+            audit.log("decision", "no market selected", {})
+            time.sleep(sleep_s)
+            if not loop_forever:
+                cycles -= 1
+                if cycles <= 0:
+                    break
+            continue
         flow = FlowFeatures()
         ob_state: Optional[OrderbookState] = None
         try:
