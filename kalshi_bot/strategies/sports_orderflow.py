@@ -18,6 +18,7 @@ from ..flow_features import FlowFeatures
 from ..adapters.sportsdb import SportsDBClient
 from ..adapters.football_data import FootballDataClient
 from ..adapters.balldontlie import BallDontLieClient
+from ..adapters.coingecko import CoinGeckoClient, CryptoPulse
 from ..models.probability_blender import blend_probabilities
 from ..ledger import Ledger
 from ..market_selector import pick_sports_candidates
@@ -295,6 +296,9 @@ def run_sports_strategy(
     mls_client: Optional[BallDontLieClient] = None
     ncaaf_client: Optional[BallDontLieClient] = None
     ncaab_client: Optional[BallDontLieClient] = None
+    coingecko_client: Optional[CoinGeckoClient] = None
+    last_crypto_pulse: Optional[CryptoPulse] = None
+    last_crypto_pulse_ts: float = 0.0
     if settings.sports_external_enabled:
         sportsdb_client = SportsDBClient(api_key=settings.sportsdb_api_key)
         if settings.football_data_api_key:
@@ -305,6 +309,8 @@ def run_sports_strategy(
             mls_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/mls/v1")
             ncaaf_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/ncaaf/v1")
             ncaab_client = BallDontLieClient(api_key=settings.balldontlie_api_key, base="https://api.balldontlie.io/ncaab/v1")
+    if settings.coingecko_enabled:
+        coingecko_client = CoinGeckoClient(base_url=settings.coingecko_base_url)
 
     family = (family or "all").lower().strip()
     if family not in {"all", "sports", "crypto", "finance"}:
@@ -424,6 +430,7 @@ def run_sports_strategy(
 
         if not ob_state:
             audit.log("decision", "no orderbook state", {"market": pick.ticker})
+            candidate_cache.pop(pick.ticker, None)
             # Fall back to market summary quotes if WS/orderbook unavailable.
             market_info = data_client.get_market(pick.ticker)
             yes_bid = market_info.get("yes_bid")
@@ -451,6 +458,7 @@ def run_sports_strategy(
 
         if yes_bid is None and no_bid is None:
             audit.log("decision", "empty orderbook", {"market": pick.ticker})
+            candidate_cache.pop(pick.ticker, None)
             time.sleep(sleep_s)
             if not loop_forever:
                 cycles -= 1
@@ -511,6 +519,24 @@ def run_sports_strategy(
         # Convert feature mix into a small probability delta.
         delta_p = 0.05 * imbalance + 0.002 * delta_mid + 0.004 * bid_mom - 0.004 * ask_mom - 0.003 * spread_trend
         delta_p += 0.01 * (drift * 100.0)
+
+        # BTC/ETH external pulse bridge (free CoinGecko feed):
+        # use short-term drift as a conservative additive flow term for crypto tickers.
+        crypto_pulse_adj = 0.0
+        if family == "crypto" and coingecko_client is not None:
+            try:
+                now_ts = time.time()
+                if (now_ts - last_crypto_pulse_ts) > 20 or last_crypto_pulse is None:
+                    coin_id = "bitcoin" if "BTC" in pick.ticker.upper() else ("ethereum" if "ETH" in pick.ticker.upper() else "bitcoin")
+                    last_crypto_pulse = coingecko_client.get_pulse(coin_id=coin_id)
+                    last_crypto_pulse_ts = now_ts
+                if last_crypto_pulse is not None:
+                    # 1h change contributes most; 24h change is heavily downweighted.
+                    crypto_pulse_adj = 0.0015 * float(last_crypto_pulse.change_1h_pct) + 0.0003 * float(last_crypto_pulse.change_24h_pct)
+                    delta_p += crypto_pulse_adj
+            except Exception as exc:
+                audit.log("decision", "coingecko pulse failed", {"market": pick.ticker, "error": str(exc)})
+
         regime = "normal"
         if vol_baseline > 0 and vol_current > settings.sports.vol_high_mult * vol_baseline:
             regime = "high_vol"
@@ -887,6 +913,7 @@ def run_sports_strategy(
                 "realized_var_current": vol_current,
                 "realized_var_baseline": vol_baseline,
                 "regime": regime,
+                "crypto_pulse_adj": crypto_pulse_adj,
                 "arb_opportunity": arb_opportunity,
                 "arb_spread_cents": arb_spread_cents,
             },
