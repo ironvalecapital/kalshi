@@ -1230,6 +1230,74 @@ def report(
     console.print(path.read_text())
 
 
+@app.command("limiter-report")
+def limiter_report(
+    last: int = typer.Option(500, help="Inspect the last N decision events from audit log"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    """
+    Summarize why sports decisions abstained and print tuning hints.
+    """
+    settings = build_settings(config)
+    log_path = Path(settings.log_path)
+    if not log_path.exists():
+        console.print(f"Audit log not found: {log_path}")
+        raise typer.Exit(1)
+
+    raw_lines = log_path.read_text().splitlines()
+    limiter_counts: Counter[str] = Counter()
+    total_decisions = 0
+    total_abstains = 0
+
+    for line in reversed(raw_lines):
+        if total_decisions >= max(1, last):
+            break
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if row.get("event_type") != "decision" or row.get("message") != "sports orderflow":
+            continue
+        total_decisions += 1
+        ctx = row.get("context", {}) if isinstance(row.get("context"), dict) else {}
+        action = str(ctx.get("action") or "")
+        limiter = str(ctx.get("decision_limiter") or "unknown")
+        if action == "ABSTAIN":
+            total_abstains += 1
+            limiter_counts[limiter] += 1
+
+    if total_decisions == 0:
+        console.print("No sports decision events found in audit log yet.")
+        raise typer.Exit(0)
+
+    console.print(
+        f"Decisions inspected: {total_decisions} | Abstains: {total_abstains} "
+        f"({(100.0 * total_abstains / total_decisions):.1f}%)"
+    )
+
+    hint_map = {
+        "ev_below_min": "Lower `sports.min_ev_cents` or reduce fee drag with tighter entries.",
+        "ev_or_fill_or_spread_gate": "Lower EV gate or fill gate; increase `max_spread_pct` if intentional.",
+        "imbalance_too_low": "Lower `sports.simple_imbalance_min` to permit weaker signals.",
+        "near_resolved_tail_filter": "Widen `avoid_price_low_cents`/`avoid_price_high_cents` only if desired.",
+        "longshot_yes_filter": "Raise `yes_longshot_max_cents` if you want more longshot YES entries.",
+        "no_tail_filter": "Lower `no_tail_min_cents` if you want more NO entries outside extreme tails.",
+        "illiquid_penalty": "Reduce `illiquid_ev_penalty_cents` or lower liquidity minimums.",
+        "arb_taker_disabled": "Set `allow_arb_taker: true` to permit taker arb fills.",
+        "no_signal": "Increase scan set or lower signal thresholds; market may just be quiet.",
+    }
+
+    table = Table(title="Decision Limiters")
+    table.add_column("Limiter")
+    table.add_column("Count")
+    table.add_column("Share")
+    table.add_column("Hint")
+    for limiter, count in limiter_counts.most_common():
+        share = f"{(100.0 * count / max(1, total_abstains)):.1f}%"
+        table.add_row(limiter, str(count), share, hint_map.get(limiter, "Review log details for this limiter."))
+    console.print(table)
+
+
 @app.command()
 def scan_spreads_cmd(
     top: int = typer.Option(20, help="Top N"),
