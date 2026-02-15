@@ -232,6 +232,10 @@ class SportsConfig(BaseModel):
     depth_size_divisor: int = 5
     min_arb_depth: int = 1
     allow_arb_taker: bool = True
+    taker_fallback_enabled: bool = True
+    taker_fallback_after_abstains: int = 3
+    taker_fallback_min_edge_cents: float = -0.25
+    taker_fallback_size: int = 1
     spread_scan_weight: float = 1.0
     simple_active_maker: bool = True
     simple_min_spread_cents: int = 0

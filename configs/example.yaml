@@ -74,7 +74,7 @@ risk:
   spread_wide_threshold_cents: 10.0
 
 execution:
-  prefer_maker: true
+  prefer_maker: false
   min_order_interval_seconds: 5
   require_edge_cents: 2.0
   maker_fee_rate: 0.0175
@@ -111,13 +111,13 @@ sports:
   exclude_quicksettle: false
   yes_longshot_max_cents: 10
   no_tail_min_cents: 90
-  maker_only: true
+  maker_only: false
   category_ev_multiplier: 1.25
   max_scan_markets: 2000
   orderbook_probe_limit: 600
   selector_workers: 1
   markets_cache_ttl_sec: 20
-  min_quote_bid_pct: 0
+  min_quote_bid_pct: 1
   max_quote_spread_pct: 100
   auto_pick_use_summary: true
   auto_pick_top_n: 1000
@@ -130,11 +130,15 @@ sports:
   depth_size_divisor: 5
   min_arb_depth: 1
   allow_arb_taker: true
+  taker_fallback_enabled: true
+  taker_fallback_after_abstains: 1
+  taker_fallback_min_edge_cents: -1.0
+  taker_fallback_size: 1
   spread_scan_weight: 1.0
   simple_active_maker: true
   simple_min_spread_cents: 0
   simple_imbalance_min: 0.0
-  simple_ladder_levels: 3
+  simple_ladder_levels: 1
   use_spread_scanner: true
   spread_scanner_min: 0
   spread_scanner_max: 99

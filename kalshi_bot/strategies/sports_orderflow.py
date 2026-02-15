@@ -274,6 +274,7 @@ def run_sports_strategy(
     last_report_ts = time.time()
     cycle_stats = {"decisions": 0, "orders": 0, "abstains": 0}
     last_edge_by_market: dict[str, float] = {}
+    abstain_streak_by_market: dict[str, int] = {}
     sportsdb_client: Optional[SportsDBClient] = None
     football_client: Optional[FootballDataClient] = None
     nba_client: Optional[BallDontLieClient] = None
@@ -599,19 +600,36 @@ def run_sports_strategy(
         if arb_opportunity and not settings.sports.allow_arb_taker:
             action = "ABSTAIN"
 
+        is_taker_order = False
+        if action == "ABSTAIN" and settings.sports.taker_fallback_enabled:
+            streak = abstain_streak_by_market.get(pick.ticker, 0)
+            if (
+                streak >= settings.sports.taker_fallback_after_abstains
+                and edge_cents >= settings.sports.taker_fallback_min_edge_cents
+                and yes_ask is not None
+                and no_ask is not None
+            ):
+                action = "BID_YES" if (p_next >= implied_yes) else "BID_NO"
+                is_taker_order = True
+
         order_result: Dict[str, Any] = {}
         if action in ("BID_YES", "BID_NO"):
-            price = (yes_bid or 0) + 1 if action == "BID_YES" else (no_bid or 0) + 1
-            if settings.sports.maker_only:
+            if is_taker_order:
+                price = (yes_ask or ((yes_bid or 0) + 1)) if action == "BID_YES" else (no_ask or ((no_bid or 0) + 1))
+            else:
+                price = (yes_bid or 0) + 1 if action == "BID_YES" else (no_bid or 0) + 1
+            if settings.sports.maker_only and not is_taker_order:
                 if yes_ask is not None and price >= yes_ask:
                     price = yes_bid or 0
                 if no_ask is not None and action == "BID_NO" and price >= no_ask:
                     price = no_bid or 0
-            fee_per = fee_cents(1, price, maker=True)
+            fee_per = fee_cents(1, price, maker=not is_taker_order)
             if settings.sports.simple_active_maker:
                 trade_scale = max(1, int(trades_5m / 5))
                 depth_scale = max(1, depth // max(1, settings.sports.depth_size_divisor))
                 size = max(1, min(settings.sports.max_order_size, max(1, trade_scale + depth_scale)))
+                if is_taker_order:
+                    size = max(1, min(settings.sports.max_order_size, settings.sports.taker_fallback_size))
             else:
                 if action == "BID_YES":
                     kfrac = kelly_fraction_yes(p_next, price, fee_per, 0.0)
@@ -635,7 +653,7 @@ def run_sports_strategy(
                 ok, reason = risk.check_order(pick.ticker, size, price / 100.0)
                 if ok:
                     # Ladder one additional level if spread permits.
-                    ladder_levels = max(1, settings.sports.simple_ladder_levels)
+                    ladder_levels = 1 if is_taker_order else max(1, settings.sports.simple_ladder_levels)
                     placed = False
                     for level in range(ladder_levels):
                         price_level = price - level
@@ -652,7 +670,7 @@ def run_sports_strategy(
                         level_fill_prob = _fill_prob_queue(queue_ahead_level, trades_5m, spread, horizon_sec=max(30, sleep_s * 3))
                         if level_fill_prob < min_fill_prob:
                             continue
-                        if settings.sports.maker_only:
+                        if settings.sports.maker_only and not is_taker_order:
                             if action == "BID_YES" and yes_ask is not None and price_level >= yes_ask:
                                 continue
                             if action == "BID_NO" and no_ask is not None and price_level >= no_ask:
@@ -822,7 +840,7 @@ def run_sports_strategy(
                 "edge_cents": edge_cents,
                 "ev_exec_cents": ev_exec,
             },
-            "fees": {"fee_cents": fee, "maker": True},
+            "fees": {"fee_cents": fee, "maker": (not is_taker_order)},
             "fill_prob": fill_prob,
             "action": action,
             "position_yes": yes_pos,
@@ -836,6 +854,10 @@ def run_sports_strategy(
         ledger.record_decision(pick.ticker, "sports_orderflow", report, report.get("features", {}), ev_after, action, 1, {}, order_result)
         audit.log("decision", "sports orderflow", report)
         last_edge_by_market[pick.ticker] = edge_cents
+        if action == "ABSTAIN":
+            abstain_streak_by_market[pick.ticker] = abstain_streak_by_market.get(pick.ticker, 0) + 1
+        else:
+            abstain_streak_by_market[pick.ticker] = 0
         cycle_stats["decisions"] += 1
         if action == "ABSTAIN":
             cycle_stats["abstains"] += 1
