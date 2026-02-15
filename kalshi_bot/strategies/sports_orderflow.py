@@ -110,20 +110,49 @@ def _auto_pick_from_summary(settings: BotSettings, data_client: KalshiDataClient
         key=lambda m: float(m.get("volume_24h", 0) or m.get("volume", 0) or 0),
         reverse=True,
     )[: settings.sports.auto_pick_top_n]
+    min_bid = settings.sports.resolved_min_quote_bid_cents()
+    max_spread = settings.sports.resolved_max_quote_spread_cents()
     for m in markets:
         if not settings.sports.auto_pick_use_summary:
             continue
-        if m.get("yes_bid") is not None or m.get("no_bid") is not None:
+        yes_bid = m.get("yes_bid")
+        no_bid = m.get("no_bid")
+        if yes_bid is None and no_bid is None:
+            continue
+        yes_ask = m.get("yes_ask")
+        if yes_ask is None and no_bid is not None:
+            yes_ask = 100 - int(no_bid)
+        spread = (int(yes_ask) - int(yes_bid)) if yes_ask is not None and yes_bid is not None else None
+        quote_ok = (yes_bid is not None and min_bid <= int(yes_bid) <= 99) or (no_bid is not None and min_bid <= int(no_bid) <= 99)
+        spread_ok = spread is None or spread <= max_spread
+        if quote_ok and spread_ok:
             return m.get("ticker")
     return None
 
 
 def _has_actionable_quotes(data_client: KalshiDataClient, ticker: str) -> bool:
     market_info = data_client.get_market(ticker)
-    if market_info.get("yes_bid") is not None or market_info.get("no_bid") is not None:
+    yes_bid = market_info.get("yes_bid")
+    no_bid = market_info.get("no_bid")
+    if (yes_bid is not None and 1 <= int(yes_bid) <= 99) or (no_bid is not None and 1 <= int(no_bid) <= 99):
         return True
     ob = data_client.get_orderbook(ticker)
-    return bool(ob.get("yes")) or bool(ob.get("no"))
+    yes = ob.get("yes") or ob.get("yes_bids") or []
+    no = ob.get("no") or ob.get("no_bids") or []
+
+    def _best_bid(levels):
+        if not levels:
+            return None
+        lvl = levels[0]
+        if isinstance(lvl, list):
+            return int(lvl[0])
+        if isinstance(lvl, dict):
+            return int(lvl.get("price")) if lvl.get("price") is not None else None
+        return None
+
+    yb = _best_bid(yes)
+    nb = _best_bid(no)
+    return (yb is not None and 1 <= yb <= 99) or (nb is not None and 1 <= nb <= 99)
 
 
 def _pick_best_by_spread(candidates: list) -> Optional[object]:
@@ -163,7 +192,7 @@ def _position_counts(data_client: KalshiDataClient, ticker: str) -> tuple[int, i
 
 def _matches_family_ticker(ticker: str, family: str) -> bool:
     fam = (family or "all").lower().strip()
-    if fam == "all":
+    if fam in {"all", "auto", ""}:
         return True
     t = (ticker or "").upper()
     rules = {
