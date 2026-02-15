@@ -90,8 +90,21 @@ def _matches_family(m: Dict[str, Any], family: str) -> bool:
 def _orderbook_complement(ob: Dict[str, Any]) -> Dict[str, Optional[int]]:
     # Orderbook bids-only; derive asks via complement.
     # https://docs.kalshi.com/getting_started/orderbook_responses
-    yes_bids = ob.get("yes", [])
-    no_bids = ob.get("no", [])
+    book = ob.get("orderbook") if isinstance(ob, dict) and isinstance(ob.get("orderbook"), dict) else ob
+    yes_raw = book.get("yes", []) or book.get("yes_bids", [])
+    no_raw = book.get("no", []) or book.get("no_bids", [])
+
+    def _norm(levels: List[Any]) -> List[List[int]]:
+        out: List[List[int]] = []
+        for lvl in levels:
+            if isinstance(lvl, list) and len(lvl) >= 2:
+                out.append([int(lvl[0]), int(lvl[1])])
+            elif isinstance(lvl, dict) and lvl.get("price") is not None and lvl.get("size") is not None:
+                out.append([int(lvl["price"]), int(lvl["size"])])
+        return out
+
+    yes_bids = _norm(yes_raw)
+    no_bids = _norm(no_raw)
     best_yes_bid = yes_bids[0][0] if yes_bids else None
     best_no_bid = no_bids[0][0] if no_bids else None
     best_yes_ask = 100 - best_no_bid if best_no_bid is not None else None
@@ -133,7 +146,7 @@ def _is_actionable_quote(settings: BotSettings, prices: Dict[str, Optional[int]]
     yes_bid = prices.get("best_yes_bid")
     no_bid = prices.get("best_no_bid")
     spread = prices.get("spread_yes")
-    min_bid = settings.sports.resolved_min_quote_bid_cents()
+    min_bid = max(1, settings.sports.resolved_min_quote_bid_cents())
     max_spread = settings.sports.resolved_max_quote_spread_cents()
     if yes_bid is None and no_bid is None:
         return False
@@ -142,7 +155,9 @@ def _is_actionable_quote(settings: BotSettings, prices: Dict[str, Optional[int]]
         return False
     if spread is not None and spread > max_spread:
         return False
-    return (yes_bid is not None and yes_bid >= min_bid) or (no_bid is not None and no_bid >= min_bid)
+    yes_ok = yes_bid is not None and min_bid <= int(yes_bid) <= 99
+    no_ok = no_bid is not None and min_bid <= int(no_bid) <= 99
+    return yes_ok or no_ok
 
 
 def _count_trades(trades: List[Dict[str, Any]], since: datetime) -> int:

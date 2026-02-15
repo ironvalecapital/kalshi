@@ -137,8 +137,7 @@ def _has_actionable_quotes(data_client: KalshiDataClient, ticker: str) -> bool:
     if (yes_bid is not None and 1 <= int(yes_bid) <= 99) or (no_bid is not None and 1 <= int(no_bid) <= 99):
         return True
     ob = data_client.get_orderbook(ticker)
-    yes = ob.get("yes") or ob.get("yes_bids") or []
-    no = ob.get("no") or ob.get("no_bids") or []
+    yes, no = _extract_orderbook_levels(ob)
 
     def _best_bid(levels):
         if not levels:
@@ -153,6 +152,24 @@ def _has_actionable_quotes(data_client: KalshiDataClient, ticker: str) -> bool:
     yb = _best_bid(yes)
     nb = _best_bid(no)
     return (yb is not None and 1 <= yb <= 99) or (nb is not None and 1 <= nb <= 99)
+
+
+def _extract_orderbook_levels(ob: dict) -> tuple[list, list]:
+    if isinstance(ob, dict) and isinstance(ob.get("orderbook"), dict):
+        ob = ob.get("orderbook", {})
+    yes = ob.get("yes") or ob.get("yes_bids") or []
+    no = ob.get("no") or ob.get("no_bids") or []
+    return yes, no
+
+
+def _normalize_levels(levels: list) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for lvl in levels:
+        if isinstance(lvl, list) and len(lvl) >= 2:
+            out.append((int(lvl[0]), int(lvl[1])))
+        elif isinstance(lvl, dict) and lvl.get("price") is not None and lvl.get("size") is not None:
+            out.append((int(lvl["price"]), int(lvl["size"])))
+    return out
 
 
 def _pick_best_by_spread(candidates: list) -> Optional[object]:
@@ -379,11 +396,12 @@ def run_sports_strategy(
         ob_state: Optional[OrderbookState] = None
         try:
             ob = data_client.get_orderbook(pick.ticker)
-            yes_levels = ob.get("yes", []) or []
-            no_levels = ob.get("no", []) or []
+            yes_levels, no_levels = _extract_orderbook_levels(ob)
+            yes_norm = _normalize_levels(yes_levels)
+            no_norm = _normalize_levels(no_levels)
             ob_state = OrderbookState(
-                yes_bids={int(p): int(sz) for p, sz in yes_levels if p is not None and sz is not None},
-                no_bids={int(p): int(sz) for p, sz in no_levels if p is not None and sz is not None},
+                yes_bids={int(p): int(sz) for p, sz in yes_norm},
+                no_bids={int(p): int(sz) for p, sz in no_norm},
             )
         except KalshiRestError as exc:
             audit.log("decision", "orderbook rest failed", {"market": pick.ticker, "error": str(exc)})
