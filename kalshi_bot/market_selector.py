@@ -133,8 +133,8 @@ def _is_actionable_quote(settings: BotSettings, prices: Dict[str, Optional[int]]
     yes_bid = prices.get("best_yes_bid")
     no_bid = prices.get("best_no_bid")
     spread = prices.get("spread_yes")
-    min_bid = int(getattr(settings.sports, "min_quote_bid_cents", 2))
-    max_spread = int(getattr(settings.sports, "max_quote_spread_cents", 30))
+    min_bid = settings.sports.resolved_min_quote_bid_cents()
+    max_spread = settings.sports.resolved_max_quote_spread_cents()
     if yes_bid is None and no_bid is None:
         return False
     # Reject dead 0/100 books and extremely wide quotes.

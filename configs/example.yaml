@@ -92,41 +92,41 @@ balldontlie_api_key: null
 sports:
   market_universe: "all"
   statuses: ["open", "unopened"]
-  keywords: ["SPORT", "SPORTS", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "GAME", "MATCH", "TEAM", "CRYPTO", "BTC", "ETH", "FINANCE", "FED", "CPI", "RATE"]
+  keywords: ["SPORT", "SPORTS", "PRO BASKETBALL (M)", "PRO BASKETBALL", "COLLEGE BASEBALL", "NBA", "NFL", "NHL", "MLB", "NCAAB", "NCAAF", "GAME", "MATCH", "TEAM", "CRYPTO", "BTC", "ETH", "FINANCE", "FED", "CPI", "RATE"]
   allowlist: []
-  max_spread_cents: 70.0
+  max_spread_cents: 99.0
   min_trades_60m: 0
   min_trades_5m: 0
   min_top_depth: 0
-  min_ev_cents: 0.0
+  min_ev_cents: -0.5
   extreme_edge_cents: 6.0
   urgency_window_sec: 300
   min_order_interval_sec: 3
   max_cancels_per_min: 10
-  top_n: 100
+  top_n: 200
   base_size: 1
   max_order_size: 15
   allow_unmatched_markets: true
-  exclude_multigame_extended: true
-  exclude_quicksettle: true
+  exclude_multigame_extended: false
+  exclude_quicksettle: false
   yes_longshot_max_cents: 10
   no_tail_min_cents: 90
   maker_only: true
   category_ev_multiplier: 1.25
   max_scan_markets: 1000
-  orderbook_probe_limit: 100
+  orderbook_probe_limit: 300
   selector_workers: 1
-  markets_cache_ttl_sec: 90
-  min_quote_bid_cents: 2
-  max_quote_spread_cents: 30
+  markets_cache_ttl_sec: 20
+  min_quote_bid_pct: 0
+  max_quote_spread_pct: 100
   auto_pick_use_summary: true
-  auto_pick_top_n: 100
+  auto_pick_top_n: 300
   daily_report_interval_sec: 3600
   stale_order_max_age_sec: 300
   stale_order_cancel_edge_cents: 0.1
   min_spread_cents: 0
-  avoid_price_low_cents: 2
-  avoid_price_high_cents: 98
+  avoid_price_low_cents: 0
+  avoid_price_high_cents: 100
   depth_size_divisor: 5
   min_arb_depth: 1
   allow_arb_taker: true
@@ -138,16 +138,17 @@ sports:
   use_spread_scanner: true
   spread_scanner_min: 0
   spread_scanner_max: 99
-  crypto_min_ev_cents: -0.15
-  crypto_min_fill_prob: 0.05
-  crypto_max_spread_cents: 45.0
+  crypto_min_ev_cents: -0.5
+  crypto_min_fill_prob: 0.0
+  max_spread_pct: 100.0
+  crypto_max_spread_pct: 100.0
   crypto_top_n: 200
   uncertainty_z: 1.0
   uncertainty_depth_divisor: 20.0
   uncertainty_spread_weight: 0.002
-  illiquid_min_trades_60m: 5
-  illiquid_min_depth_top3: 10
-  illiquid_ev_penalty_cents: 0.35
+  illiquid_min_trades_60m: 0
+  illiquid_min_depth_top3: 0
+  illiquid_ev_penalty_cents: 0.0
   enable_exit_rules: true
   exit_edge_cents: -0.25
   stop_loss_edge_cents: -2.5

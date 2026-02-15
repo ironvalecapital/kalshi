@@ -486,11 +486,11 @@ def run_sports_strategy(
                 close_min = None
         min_ev = settings.sports.min_ev_cents
         min_fill_prob = 0.1
-        max_spread_cents = settings.sports.max_spread_cents
+        max_spread_cents = settings.sports.resolved_max_spread_cents()
         if family == "crypto":
             min_ev = settings.sports.crypto_min_ev_cents
             min_fill_prob = settings.sports.crypto_min_fill_prob
-            max_spread_cents = settings.sports.crypto_max_spread_cents
+            max_spread_cents = settings.sports.resolved_crypto_max_spread_cents()
         if trades_60m < settings.sports.illiquid_min_trades_60m or depth < settings.sports.illiquid_min_depth_top3:
             min_ev += settings.sports.illiquid_ev_penalty_cents
 

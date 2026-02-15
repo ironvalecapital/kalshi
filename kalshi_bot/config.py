@@ -170,6 +170,8 @@ class SportsConfig(BaseModel):
     keywords: list = [
         "SPORT",
         "SPORTS",
+        "PRO BASKETBALL (M)",
+        "PRO BASKETBALL",
         "NBA",
         "NFL",
         "NHL",
@@ -188,7 +190,7 @@ class SportsConfig(BaseModel):
         "RATE",
     ]
     allowlist: list = []
-    max_spread_cents: float = 70.0
+    max_spread_cents: float = 99.0
     min_trades_60m: int = 0
     min_trades_5m: int = 0
     min_top_depth: int = 0
@@ -212,8 +214,13 @@ class SportsConfig(BaseModel):
     orderbook_probe_limit: int = 120
     selector_workers: int = 1
     markets_cache_ttl_sec: int = 90
-    min_quote_bid_cents: int = 2
-    max_quote_spread_cents: int = 30
+    min_quote_bid_cents: int = 1
+    max_quote_spread_cents: int = 99
+    # Percentage aliases (0-100). If set, these override *_cents fields.
+    min_quote_bid_pct: Optional[float] = 0.0
+    max_quote_spread_pct: Optional[float] = 100.0
+    max_spread_pct: Optional[float] = 100.0
+    crypto_max_spread_pct: Optional[float] = 100.0
     auto_pick_use_summary: bool = True
     auto_pick_top_n: int = 300
     daily_report_interval_sec: int = 3600
@@ -236,7 +243,7 @@ class SportsConfig(BaseModel):
     # Crypto lane overrides (used when running sports strategy with family=crypto).
     crypto_min_ev_cents: float = -0.15
     crypto_min_fill_prob: float = 0.05
-    crypto_max_spread_cents: float = 45.0
+    crypto_max_spread_cents: float = 99.0
     crypto_top_n: int = 200
     uncertainty_z: float = 1.0
     uncertainty_depth_divisor: float = 20.0
@@ -248,6 +255,31 @@ class SportsConfig(BaseModel):
     exit_edge_cents: float = -0.25
     stop_loss_edge_cents: float = -2.5
     exit_time_to_close_min: int = 20
+
+    @staticmethod
+    def _pct_to_cents(value: float) -> float:
+        # Kalshi binary prices are 0..100 cents (i.e., 0..100% probability).
+        return max(0.0, min(100.0, float(value)))
+
+    def resolved_min_quote_bid_cents(self) -> int:
+        if self.min_quote_bid_pct is not None:
+            return int(self._pct_to_cents(self.min_quote_bid_pct))
+        return int(self.min_quote_bid_cents)
+
+    def resolved_max_quote_spread_cents(self) -> int:
+        if self.max_quote_spread_pct is not None:
+            return int(self._pct_to_cents(self.max_quote_spread_pct))
+        return int(self.max_quote_spread_cents)
+
+    def resolved_max_spread_cents(self) -> float:
+        if self.max_spread_pct is not None:
+            return self._pct_to_cents(self.max_spread_pct)
+        return float(self.max_spread_cents)
+
+    def resolved_crypto_max_spread_cents(self) -> float:
+        if self.crypto_max_spread_pct is not None:
+            return self._pct_to_cents(self.crypto_max_spread_pct)
+        return float(self.crypto_max_spread_cents)
 
 
 class BotSettings(BaseSettings):

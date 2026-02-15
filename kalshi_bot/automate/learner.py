@@ -203,7 +203,7 @@ def run_learn(
             thresholds = {
                 "entry_edge_pp": settings.weather.entry_edge_pp if lane == "weather" else None,
                 "min_edge_after_fees_cents": settings.weather.min_edge_after_fees_cents if lane == "weather" else None,
-                "max_spread_cents": settings.weather.max_spread_cents if lane == "weather" else settings.sports.max_spread_cents,
+                "max_spread_cents": settings.weather.max_spread_cents if lane == "weather" else settings.sports.resolved_max_spread_cents(),
             }
             if lane == "weather":
                 update_playbook_weather(thresholds)
