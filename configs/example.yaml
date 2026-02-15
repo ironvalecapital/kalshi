@@ -135,6 +135,21 @@ sports:
   taker_fallback_min_edge_cents: -1.0
   taker_fallback_size: 1
   spread_scan_weight: 1.0
+  flow_lambda: 0.35
+  high_vol_regime_threshold: 0.0008
+  high_vol_lambda_mult: 1.2
+  high_vol_kelly_mult: 0.7
+  adaptive_kelly_base: 0.20
+  adaptive_kelly_low_vol: 0.25
+  adaptive_kelly_high_vol: 0.10
+  adaptive_kelly_drawdown: 0.08
+  drawdown_reduce_threshold: 0.20
+  vol_current_window_sec: 300
+  vol_baseline_window_sec: 1800
+  vol_high_mult: 1.5
+  vol_low_mult: 0.75
+  high_vol_min_ev_cents: 2.5
+  normal_min_ev_cents: 1.5
   simple_active_maker: true
   simple_min_spread_cents: 0
   simple_imbalance_min: 0.0

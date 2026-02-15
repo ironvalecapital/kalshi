@@ -43,9 +43,8 @@ from .spread_scanner import scan_spreads as scan_spreads_fn
 from .edge_scorer import score_no, score_yes, implied_probability as implied_prob_score
 from .execution_manager import maker_ladder_cycle
 from .order_lifecycle import OrderLifecycle
-from .edge_scorer import score_no, score_yes, implied_probability
-from .execution_manager import maker_ladder_cycle
-from .order_lifecycle import OrderLifecycle
+from .backtest.monte_carlo import MonteCarloConfig, run_growth_simulation, style_configs
+from .analytics.validation import edge_ttest
 from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 from .alerts import send_telegram
@@ -90,6 +89,8 @@ def build_settings(config_path: Optional[str]) -> BotSettings:
     settings.rate_limit.read_per_sec = limits["read"]
     settings.rate_limit.write_per_sec = limits["write"]
     settings.rate_limit.burst = limits["burst"]
+    # Institutional hard cap: keep Kelly multiplier <= 15% until formal review says otherwise.
+    settings.execution.kelly_fraction = min(settings.execution.kelly_fraction, 0.15)
     return settings
 
 
@@ -663,8 +664,21 @@ def watch_flow(
 
     def _derive_book_snapshot(ticker: str) -> Dict[str, Any]:
         ob = data_client.get_orderbook(ticker)
-        yes_levels = ob.get("yes", []) or []
-        no_levels = ob.get("no", []) or []
+        book = ob.get("orderbook") if isinstance(ob, dict) and isinstance(ob.get("orderbook"), dict) else ob
+        yes_raw = book.get("yes", []) or book.get("yes_bids", [])
+        no_raw = book.get("no", []) or book.get("no_bids", [])
+
+        def _norm(levels: List[Any]) -> List[List[int]]:
+            out: List[List[int]] = []
+            for lvl in levels:
+                if isinstance(lvl, list) and len(lvl) >= 2:
+                    out.append([int(lvl[0]), int(lvl[1])])
+                elif isinstance(lvl, dict) and lvl.get("price") is not None and lvl.get("size") is not None:
+                    out.append([int(lvl["price"]), int(lvl["size"])])
+            return out
+
+        yes_levels = _norm(yes_raw)
+        no_levels = _norm(no_raw)
         best_yes_bid = yes_levels[0][0] if yes_levels else None
         best_no_bid = no_levels[0][0] if no_levels else None
         best_yes_ask = 100 - best_no_bid if best_no_bid is not None else None
@@ -1512,6 +1526,75 @@ def run_strategy(
         )
         if cycles > 1:
             time.sleep(sleep)
+
+
+@app.command("ops-report")
+def ops_report(
+    lookback: int = typer.Option(500, help="Number of recent trades to evaluate"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    ledger = Ledger(settings.db_path)
+    pnls = ledger.get_trade_pnls(limit=max(50, lookback))
+    stats = edge_ttest(pnls)
+
+    table = Table(title="Ironvale Ops Report")
+    table.add_column("Metric")
+    table.add_column("Value")
+    table.add_row("Recent trades", str(stats["n"]))
+    table.add_row("Mean pnl/trade", f"{stats['mean']:.4f}")
+    table.add_row("t-stat", f"{stats['t_stat']:.3f}")
+    table.add_row("p-value (one-sided)", f"{stats['p_value_one_sided']:.4f}")
+    table.add_row("Kelly cap", f"{100 * min(0.15, settings.execution.kelly_fraction):.1f}%")
+    table.add_row("Per-market exposure cap", f"${settings.risk.max_position_per_market_usd:.2f}")
+    table.add_row("Per-order max notional", f"${settings.risk.max_notional_usd:.2f}")
+    table.add_row("Rule: no changes before 500 trades", "PASS" if stats["n"] >= 500 else "LOCKED")
+    table.add_row("Rule: significance p < 0.05", "PASS" if stats["p_value_one_sided"] < 0.05 else "FAIL")
+    console.print(table)
+
+    manual = Path("docs/IRONVALE_PROP_DESK_OPERATING_MANUAL.md")
+    if manual.exists():
+        console.print(f"Operating manual: {manual}")
+
+
+@app.command("simulate-growth")
+def simulate_growth(
+    style: str = typer.Option("adaptive", help="aggressive|institutional|adaptive"),
+    bankroll: float = typer.Option(5.0, help="Starting bankroll in USD"),
+    years: int = typer.Option(5, help="Years to simulate"),
+    trades_per_year: int = typer.Option(500, help="Trades per year"),
+    win_prob: float = typer.Option(0.58, help="Per-trade win probability"),
+    edge_up: float = typer.Option(0.03, help="Fractional gain on winning trade"),
+    paths: int = typer.Option(10000, help="Monte Carlo paths"),
+):
+    presets = style_configs()
+    key = style.strip().lower()
+    if key not in presets:
+        raise typer.BadParameter("style must be one of: aggressive, institutional, adaptive")
+    cfg = presets[key]
+    cfg.bankroll_start = bankroll
+    cfg.years = years
+    cfg.trades_per_year = trades_per_year
+    cfg.win_prob = win_prob
+    cfg.edge_up = edge_up
+    cfg.paths = paths
+    stats = run_growth_simulation(cfg)
+
+    table = Table(title=f"Growth Simulation ({key})")
+    table.add_column("Metric")
+    table.add_column("Value")
+    table.add_row("Start bankroll", f"${cfg.bankroll_start:.2f}")
+    table.add_row("Trades/year", str(cfg.trades_per_year))
+    table.add_row("Years", str(cfg.years))
+    table.add_row("Median final", f"${stats['median_final']:.2f}")
+    table.add_row("P25 final", f"${stats['p25_final']:.2f}")
+    table.add_row("P75 final", f"${stats['p75_final']:.2f}")
+    table.add_row("P95 final", f"${stats['p95_final']:.2f}")
+    table.add_row("Median max DD", f"{100 * stats['median_max_dd']:.1f}%")
+    table.add_row("Ruin probability", f"{100 * stats['ruin_prob']:.1f}%")
+    table.add_row("70%+ DD probability", f"{100 * stats['deep_dd_prob']:.1f}%")
+    console.print(table)
+
 
 if __name__ == "__main__":
     app()

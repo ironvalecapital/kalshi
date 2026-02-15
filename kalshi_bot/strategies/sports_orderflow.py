@@ -18,6 +18,7 @@ from ..flow_features import FlowFeatures
 from ..adapters.sportsdb import SportsDBClient
 from ..adapters.football_data import FootballDataClient
 from ..adapters.balldontlie import BallDontLieClient
+from ..models.probability_blender import blend_probabilities
 from ..ledger import Ledger
 from ..market_selector import pick_sports_candidates
 from ..spread_scanner import scan_spreads
@@ -43,6 +44,18 @@ def _fill_prob_queue(queue_ahead: int, trades_5m: int, spread: int, horizon_sec:
     q = max(0.0, float(queue_ahead))
     p = 1.0 - math.exp(-expected_consumption / (q + 1.0))
     return max(0.0, min(1.0, p))
+
+
+def _max_drawdown_from_pnls(bankroll_start: float, pnls: list[float]) -> float:
+    eq = float(bankroll_start)
+    peak = eq
+    max_dd = 0.0
+    for pnl in pnls:
+        eq += float(pnl)
+        peak = max(peak, eq)
+        if peak > 0:
+            max_dd = max(max_dd, (peak - eq) / peak)
+    return max_dd
 
 
 def _probability_uncertainty(
@@ -478,6 +491,8 @@ def run_sports_strategy(
         ask_mom = flow.ask_momentum(30)
         spread_trend = flow.spread_trend(30)
         vol = flow.realized_var(60)
+        vol_current = flow.realized_var(settings.sports.vol_current_window_sec)
+        vol_baseline = flow.realized_var(settings.sports.vol_baseline_window_sec)
 
         a0, a1, a2, a3, a4, a5 = 0.0, 1.2, 0.01, 0.05, 0.3, 0.02
         p_next = _sigmoid(a0 + a1 * imbalance + a2 * signed_vol + a3 * delta_mid - a4 * spread - a5 * vol)
@@ -496,7 +511,15 @@ def run_sports_strategy(
         # Convert feature mix into a small probability delta.
         delta_p = 0.05 * imbalance + 0.002 * delta_mid + 0.004 * bid_mom - 0.004 * ask_mom - 0.003 * spread_trend
         delta_p += 0.01 * (drift * 100.0)
-        p_next = max(0.01, min(0.99, implied_yes + delta_p))
+        regime = "normal"
+        if vol_baseline > 0 and vol_current > settings.sports.vol_high_mult * vol_baseline:
+            regime = "high_vol"
+        elif vol_baseline > 0 and vol_current < settings.sports.vol_low_mult * vol_baseline:
+            regime = "low_vol"
+        flow_lambda = settings.sports.flow_lambda
+        if regime == "high_vol":
+            flow_lambda *= settings.sports.high_vol_lambda_mult
+        p_next = blend_probabilities(implied_yes, delta_p, flow_lambda)
 
         p_implied_ask = (yes_ask / 100.0) if yes_ask is not None else implied_yes
         uncertainty = _probability_uncertainty(
@@ -536,6 +559,10 @@ def run_sports_strategy(
         min_ev = settings.sports.min_ev_cents
         min_fill_prob = 0.1
         max_spread_cents = settings.sports.resolved_max_spread_cents()
+        if regime == "high_vol":
+            min_ev = max(min_ev, settings.sports.high_vol_min_ev_cents)
+        else:
+            min_ev = max(min_ev, settings.sports.normal_min_ev_cents)
         if family == "crypto":
             min_ev = settings.sports.crypto_min_ev_cents
             min_fill_prob = settings.sports.crypto_min_fill_prob
@@ -650,11 +677,24 @@ def run_sports_strategy(
                     kfrac = kelly_fraction_yes(p_next, price, fee_per, 0.0)
                 else:
                     kfrac = kelly_fraction_no(p_next, price, fee_per, 0.0)
+                if regime == "high_vol":
+                    kelly_mult = settings.sports.adaptive_kelly_high_vol
+                elif regime == "low_vol":
+                    kelly_mult = settings.sports.adaptive_kelly_low_vol
+                else:
+                    kelly_mult = settings.sports.adaptive_kelly_base
+                drawdown = _max_drawdown_from_pnls(
+                    settings.execution.bankroll_usd,
+                    ledger.get_trade_pnls(limit=500),
+                )
+                if drawdown >= settings.sports.drawdown_reduce_threshold:
+                    kelly_mult = min(kelly_mult, settings.sports.adaptive_kelly_drawdown)
+                kelly_mult = min(kelly_mult, 0.15)
                 size = kelly_contracts(
                     bankroll_usd=settings.execution.bankroll_usd,
                     price_cents=price,
                     kelly_fraction=kfrac,
-                    fractional=settings.execution.kelly_fraction,
+                    fractional=min(settings.execution.kelly_fraction, kelly_mult),
                     fill_prob=fill_prob,
                     use_fill_prob=settings.execution.kelly_use_fill_prob,
                     max_contracts=settings.sports.max_order_size,
@@ -844,6 +884,9 @@ def run_sports_strategy(
                 "microprice": micro,
                 "vwap_5m": vwap,
                 "realized_var_1m": vol,
+                "realized_var_current": vol_current,
+                "realized_var_baseline": vol_baseline,
+                "regime": regime,
                 "arb_opportunity": arb_opportunity,
                 "arb_spread_cents": arb_spread_cents,
             },

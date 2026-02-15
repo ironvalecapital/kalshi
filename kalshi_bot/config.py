@@ -237,6 +237,21 @@ class SportsConfig(BaseModel):
     taker_fallback_min_edge_cents: float = -0.25
     taker_fallback_size: int = 1
     spread_scan_weight: float = 1.0
+    flow_lambda: float = 0.35
+    high_vol_regime_threshold: float = 0.0008
+    high_vol_lambda_mult: float = 1.2
+    high_vol_kelly_mult: float = 0.7
+    adaptive_kelly_base: float = 0.20
+    adaptive_kelly_low_vol: float = 0.25
+    adaptive_kelly_high_vol: float = 0.10
+    adaptive_kelly_drawdown: float = 0.08
+    drawdown_reduce_threshold: float = 0.20
+    vol_current_window_sec: int = 300
+    vol_baseline_window_sec: int = 1800
+    vol_high_mult: float = 1.5
+    vol_low_mult: float = 0.75
+    high_vol_min_ev_cents: float = 2.5
+    normal_min_ev_cents: float = 1.5
     simple_active_maker: bool = True
     simple_min_spread_cents: int = 0
     simple_imbalance_min: float = 0.0
@@ -312,6 +327,8 @@ class BotSettings(BaseSettings):
     worldmonitor_news_path: str = Field(default="/search-news", validation_alias="WORLDMONITOR_NEWS_PATH")
     polygon_api_key: Optional[str] = Field(default=None, validation_alias="POLYGON_API_KEY")
     polygon_base_url: str = Field(default="https://api.polygon.io", validation_alias="POLYGON_BASE_URL")
+    coingecko_enabled: bool = Field(default=True, validation_alias="COINGECKO_ENABLED")
+    coingecko_base_url: str = Field(default="https://api.coingecko.com/api/v3", validation_alias="COINGECKO_BASE_URL")
 
     data: DataConfig = DataConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()

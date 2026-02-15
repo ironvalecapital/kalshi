@@ -59,7 +59,10 @@ class ExecutionEngine:
         return vals
 
     def _available_balance_usd(self) -> Optional[float]:
-        bal = self.data_client.get_balance()
+        get_balance = getattr(self.data_client, "get_balance", None)
+        if get_balance is None:
+            return None
+        bal = get_balance()
         if bal is None:
             return None
         # Try common balance keys first; then fallback to max positive numeric.

@@ -408,3 +408,19 @@ class Ledger:
         )
         row = cur.fetchone()
         return float(row[0]) if row else 0.0
+
+    def get_trade_pnls(self, limit: int = 1000) -> List[float]:
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT pnl FROM trades WHERE pnl IS NOT NULL ORDER BY ts DESC LIMIT ?
+            """,
+            (limit,),
+        )
+        return [float(r[0]) for r in cur.fetchall() if r[0] is not None]
+
+    def get_trade_count(self) -> int:
+        cur = self.conn.cursor()
+        cur.execute("SELECT COUNT(1) FROM trades")
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
