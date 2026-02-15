@@ -517,6 +517,7 @@ def run_sports_strategy(
             fill_prob = _fill_prob(depth, spread, trades_5m / 5.0)
         ev_exec = ev_after * fill_prob
         action = "ABSTAIN"
+        limiter_reason = "no_signal"
         yes_pos, no_pos = _position_counts(data_client, pick.ticker)
         market_meta = data_client.get_market(pick.ticker)
         close_raw = market_meta.get("close_time") or market_meta.get("close_ts")
@@ -541,6 +542,7 @@ def run_sports_strategy(
             max_spread_cents = settings.sports.resolved_crypto_max_spread_cents()
         if trades_60m < settings.sports.illiquid_min_trades_60m or depth < settings.sports.illiquid_min_depth_top3:
             min_ev += settings.sports.illiquid_ev_penalty_cents
+            limiter_reason = "illiquid_penalty"
 
         # Category gating: higher EV threshold for sports/entertainment/media-like categories.
         if pick.event_ticker:
@@ -552,6 +554,7 @@ def run_sports_strategy(
                 # Simple maker: use imbalance + momentum to choose side.
                 if abs(imbalance) < settings.sports.simple_imbalance_min:
                     action = "ABSTAIN"
+                    limiter_reason = "imbalance_too_low"
                 else:
                     action = "BID_NO" if imbalance > 0 else "BID_YES"
                 edge_cents = max(0.0, (spread / 2.0) - fee)
@@ -562,9 +565,12 @@ def run_sports_strategy(
                 ev_exec = ev_after * fill_prob
                 if ev_exec < min_ev:
                     action = "ABSTAIN"
+                    limiter_reason = "ev_below_min"
         else:
             if ev_exec >= min_ev and spread <= max_spread_cents and fill_prob > min_fill_prob:
                 action = "BID_YES" if edge_cents >= 0 else "BID_NO"
+            else:
+                limiter_reason = "ev_or_fill_or_spread_gate"
 
         # Exit logic: reduce positions on edge decay, stop-loss, or near expiration.
         if settings.sports.enable_exit_rules:
@@ -572,23 +578,30 @@ def run_sports_strategy(
             if yes_pos > 0:
                 if edge_cents <= settings.sports.stop_loss_edge_cents or edge_cents <= settings.sports.exit_edge_cents:
                     action = "SELL_YES"
+                    limiter_reason = "exit_yes_edge_decay"
                 if close_min is not None and close_min <= settings.sports.exit_time_to_close_min and edge_cents <= 0:
                     action = "SELL_YES"
+                    limiter_reason = "exit_yes_time"
             elif no_pos > 0:
                 if no_edge_cents <= settings.sports.stop_loss_edge_cents or no_edge_cents <= settings.sports.exit_edge_cents:
                     action = "SELL_NO"
+                    limiter_reason = "exit_no_edge_decay"
                 if close_min is not None and close_min <= settings.sports.exit_time_to_close_min and no_edge_cents <= 0:
                     action = "SELL_NO"
+                    limiter_reason = "exit_no_time"
 
         # Near-resolved filter: avoid extreme tails.
         if yes_ask is not None and (yes_ask <= settings.sports.avoid_price_low_cents or yes_ask >= settings.sports.avoid_price_high_cents):
             action = "ABSTAIN"
+            limiter_reason = "near_resolved_tail_filter"
 
         # Longshot bias filters: avoid buying YES at extreme low prices; prefer NO at tails.
         if action == "BID_YES" and yes_ask is not None and yes_ask <= settings.sports.yes_longshot_max_cents:
             action = "ABSTAIN"
+            limiter_reason = "longshot_yes_filter"
         if action == "BID_NO" and yes_ask is not None and yes_ask < settings.sports.no_tail_min_cents:
             action = "ABSTAIN"
+            limiter_reason = "no_tail_filter"
 
         # Depth-aware arbitrage check (informational)
         arb_opportunity = False
@@ -599,6 +612,7 @@ def run_sports_strategy(
                 arb_opportunity = True
         if arb_opportunity and not settings.sports.allow_arb_taker:
             action = "ABSTAIN"
+            limiter_reason = "arb_taker_disabled"
 
         is_taker_order = False
         if action == "ABSTAIN" and settings.sports.taker_fallback_enabled:
@@ -611,6 +625,7 @@ def run_sports_strategy(
             ):
                 action = "BID_YES" if (p_next >= implied_yes) else "BID_NO"
                 is_taker_order = True
+                limiter_reason = "taker_fallback"
 
         order_result: Dict[str, Any] = {}
         if action in ("BID_YES", "BID_NO"):
@@ -843,6 +858,7 @@ def run_sports_strategy(
             "fees": {"fee_cents": fee, "maker": (not is_taker_order)},
             "fill_prob": fill_prob,
             "action": action,
+            "decision_limiter": limiter_reason if action == "ABSTAIN" else "none",
             "position_yes": yes_pos,
             "position_no": no_pos,
             "minutes_to_close": close_min,
