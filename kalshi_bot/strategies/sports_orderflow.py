@@ -28,7 +28,14 @@ from ..risk import RiskManager
 
 
 def _sigmoid(x: float) -> float:
-    return 1.0 / (1.0 + math.exp(-x))
+    # Numerically stable sigmoid to avoid overflow in extreme score states.
+    if x >= 0.0:
+        z = math.exp(-x)
+        p = 1.0 / (1.0 + z)
+    else:
+        z = math.exp(x)
+        p = z / (1.0 + z)
+    return max(1e-12, min(1.0 - 1e-12, p))
 
 
 def _fill_prob(depth: int, spread: int, trade_rate: float) -> float:

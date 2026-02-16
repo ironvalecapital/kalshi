@@ -20,7 +20,14 @@ def _clamp(min_v: float, v: float, max_v: float) -> float:
 
 
 def _logit_prob(x: float) -> float:
-    return 1.0 / (1.0 + math.exp(-x))
+    # Numerically stable sigmoid to avoid overflow at extreme logits.
+    if x >= 0.0:
+        z = math.exp(-x)
+        p = 1.0 / (1.0 + z)
+    else:
+        z = math.exp(x)
+        p = z / (1.0 + z)
+    return _clamp(1e-12, p, 1.0 - 1e-12)
 
 
 def _sample_points(rng: random.Random, ppp: float) -> int:

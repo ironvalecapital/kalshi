@@ -26,3 +26,10 @@ def test_monte_carlo_efficiency_edge_directional():
     p_base = monte_carlo_win_probability(base, simulations=1000, seed=7)
     p_plus = monte_carlo_win_probability(plus, simulations=1000, seed=7)
     assert p_plus > p_base
+
+
+def test_win_probability_extreme_inputs_do_not_overflow():
+    p_low = win_probability(score_diff=-1000, time_remaining_sec=2880, possession=-1, efficiency_edge=-2.0, pace=120)
+    p_high = win_probability(score_diff=1000, time_remaining_sec=1, possession=1, efficiency_edge=2.0, pace=120)
+    assert 0.0 < p_low < 1.0
+    assert 0.0 < p_high < 1.0
