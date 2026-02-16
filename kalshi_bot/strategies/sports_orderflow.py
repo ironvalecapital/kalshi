@@ -26,6 +26,8 @@ from ..spread_scanner import scan_spreads
 from ..orderbook_live import OrderbookState
 from ..risk import RiskManager
 
+SIGMOID_DIAG_THRESHOLD = 12.0
+
 
 def _sigmoid(x: float) -> float:
     # Numerically stable sigmoid to avoid overflow in extreme score states.
@@ -510,7 +512,22 @@ def run_sports_strategy(
         vol_baseline = flow.realized_var(settings.sports.vol_baseline_window_sec)
 
         a0, a1, a2, a3, a4, a5 = 0.0, 1.2, 0.01, 0.05, 0.3, 0.02
-        p_next = _sigmoid(a0 + a1 * imbalance + a2 * signed_vol + a3 * delta_mid - a4 * spread - a5 * vol)
+        raw_logit = a0 + a1 * imbalance + a2 * signed_vol + a3 * delta_mid - a4 * spread - a5 * vol
+        if abs(raw_logit) > SIGMOID_DIAG_THRESHOLD:
+            audit.log(
+                "decision",
+                "sigmoid_input_extreme",
+                {
+                    "market_ticker": pick.ticker,
+                    "raw_logit": raw_logit,
+                    "imbalance": imbalance,
+                    "signed_vol": signed_vol,
+                    "delta_mid_30s": delta_mid,
+                    "spread": spread,
+                    "realized_var_1m": vol,
+                },
+            )
+        p_next = _sigmoid(raw_logit)
 
         implied_mid = _implied_mid_yes(yes_bid, yes_ask)
         micro = _microprice_yes(yes_bid, yes_ask, depth_yes, depth_no)
