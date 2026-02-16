@@ -157,12 +157,22 @@ def _auto_pick_from_summary(settings: BotSettings, data_client: KalshiDataClient
 
 
 def _has_actionable_quotes(data_client: KalshiDataClient, ticker: str) -> bool:
-    market_info = data_client.get_market(ticker)
+    try:
+        market_info = data_client.get_market(ticker)
+    except KalshiRestError:
+        return False
+    except Exception:
+        return False
     yes_bid = market_info.get("yes_bid")
     no_bid = market_info.get("no_bid")
     if (yes_bid is not None and 1 <= int(yes_bid) <= 99) or (no_bid is not None and 1 <= int(no_bid) <= 99):
         return True
-    ob = data_client.get_orderbook(ticker)
+    try:
+        ob = data_client.get_orderbook(ticker)
+    except KalshiRestError:
+        return False
+    except Exception:
+        return False
     yes, no = _extract_orderbook_levels(ob)
 
     def _best_bid(levels):
@@ -615,7 +625,22 @@ def run_sports_strategy(
         action = "ABSTAIN"
         limiter_reason = "no_signal"
         yes_pos, no_pos = _position_counts(data_client, pick.ticker)
-        market_meta = data_client.get_market(pick.ticker)
+        try:
+            market_meta = data_client.get_market(pick.ticker)
+        except KalshiRestError as exc:
+            audit.log(
+                "decision",
+                "market metadata unavailable",
+                {"market": pick.ticker, "status_code": exc.status_code},
+            )
+            continue
+        except Exception as exc:
+            audit.log(
+                "decision",
+                "market metadata unavailable",
+                {"market": pick.ticker, "error": str(exc)},
+            )
+            continue
         close_raw = market_meta.get("close_time") or market_meta.get("close_ts")
         close_min = None
         if close_raw is not None:
