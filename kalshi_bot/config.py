@@ -238,6 +238,12 @@ class SportsConfig(BaseModel):
     taker_fallback_size: int = 1
     spread_scan_weight: float = 1.0
     flow_lambda: float = 0.35
+    enable_lmsr_bayes: bool = True
+    lmsr_liquidity_b: float = 30.0
+    bayes_prior_weight: float = 2.0
+    bayes_market_weight: float = 3.0
+    bayes_flow_weight: float = 2.0
+    bayes_lmsr_weight: float = 2.0
     high_vol_regime_threshold: float = 0.0008
     high_vol_lambda_mult: float = 1.2
     high_vol_kelly_mult: float = 0.7

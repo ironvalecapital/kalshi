@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import time
+from collections import Counter
 from pathlib import Path
 from dateutil import parser as date_parser
 from datetime import datetime, timezone
@@ -19,6 +20,8 @@ from ..adapters.sportsdb import SportsDBClient
 from ..adapters.football_data import FootballDataClient
 from ..adapters.balldontlie import BallDontLieClient
 from ..adapters.coingecko import CoinGeckoClient, CryptoPulse
+from ..models.bayes_prior import choose_prior
+from ..models.lmsr_bayes import bayesian_yes_probability, lmsr_yes_probability
 from ..models.probability_blender import blend_probabilities
 from ..ledger import Ledger
 from ..market_selector import pick_sports_candidates
@@ -296,6 +299,7 @@ def run_sports_strategy(
     open_order_id: Optional[str] = None
     last_report_ts = time.time()
     cycle_stats = {"decisions": 0, "orders": 0, "abstains": 0}
+    blocker_counts: Counter[str] = Counter()
     last_edge_by_market: dict[str, float] = {}
     abstain_streak_by_market: dict[str, int] = {}
     sportsdb_client: Optional[SportsDBClient] = None
@@ -569,7 +573,26 @@ def run_sports_strategy(
         flow_lambda = settings.sports.flow_lambda
         if regime == "high_vol":
             flow_lambda *= settings.sports.high_vol_lambda_mult
-        p_next = blend_probabilities(implied_yes, delta_p, flow_lambda)
+        p_flow = blend_probabilities(implied_yes, delta_p, flow_lambda)
+        lmsr_yes = None
+        if settings.sports.enable_lmsr_bayes:
+            lmsr_yes = lmsr_yes_probability(
+                depth_yes=depth_yes,
+                depth_no=depth_no,
+                b=settings.sports.lmsr_liquidity_b,
+            )
+            bayes = bayesian_yes_probability(
+                prior_yes=choose_prior(),
+                prior_weight=settings.sports.bayes_prior_weight,
+                evidences=[
+                    (implied_yes, settings.sports.bayes_market_weight),
+                    (p_flow, settings.sports.bayes_flow_weight),
+                    (lmsr_yes, settings.sports.bayes_lmsr_weight),
+                ],
+            )
+            p_next = bayes.posterior_yes
+        else:
+            p_next = p_flow
 
         p_implied_ask = (yes_ask / 100.0) if yes_ask is not None else implied_yes
         uncertainty = _probability_uncertainty(
@@ -959,6 +982,8 @@ def run_sports_strategy(
             },
             "model": {
                 "p_next": p_next,
+                "p_flow": p_flow,
+                "p_lmsr": lmsr_yes,
                 "p_lower_bound": p_lower_bound,
                 "implied_yes": implied_yes,
                 "uncertainty": uncertainty,
@@ -989,6 +1014,7 @@ def run_sports_strategy(
         cycle_stats["decisions"] += 1
         if action == "ABSTAIN":
             cycle_stats["abstains"] += 1
+            blocker_counts[limiter_reason] += 1
         if order_result.get("status") == "submitted":
             cycle_stats["orders"] += 1
 
@@ -1002,10 +1028,13 @@ def run_sports_strategy(
                 "decisions": cycle_stats["decisions"],
                 "orders": cycle_stats["orders"],
                 "abstains": cycle_stats["abstains"],
+                "top_blockers": blocker_counts.most_common(10),
             }
             report_path.write_text(json.dumps(payload, indent=2))
+            audit.log("report", "sports blocker summary", payload)
             last_report_ts = now
             cycle_stats = {"decisions": 0, "orders": 0, "abstains": 0}
+            blocker_counts = Counter()
 
         # Stale order cancellation
         try:
