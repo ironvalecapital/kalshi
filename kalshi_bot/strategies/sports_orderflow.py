@@ -837,7 +837,8 @@ def run_sports_strategy(
                         else:
                             queue_ahead_level = depth_yes if action == "BID_YES" else depth_no
                         level_fill_prob = _fill_prob_queue(queue_ahead_level, trades_5m, spread, horizon_sec=max(30, sleep_s * 3))
-                        if level_fill_prob < min_fill_prob:
+                        # Taker fallback should not be blocked by maker-style queue fill estimates.
+                        if not is_taker_order and level_fill_prob < min_fill_prob:
                             continue
                         if settings.sports.maker_only and not is_taker_order:
                             if action == "BID_YES" and yes_ask is not None and price_level >= yes_ask:
