@@ -49,7 +49,6 @@ from .analytics.validation import edge_ttest
 from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 from .alerts import send_telegram
-from .adapters.basketball_reference import BasketballReferenceClient
 from .models.live_repricing import LiveState, monte_carlo_win_probability, win_probability
 
 app = typer.Typer(add_completion=False)
@@ -183,6 +182,13 @@ def scrape_bball_ref(
     - Q4 scoring patterns
     - red-zone conversion proxy (2P FG%)
     """
+    try:
+        from .adapters.basketball_reference import BasketballReferenceClient
+    except ModuleNotFoundError as exc:
+        raise typer.BadParameter(
+            "Basketball scrape requires optional dependency `beautifulsoup4`. "
+            "Install with: pip install beautifulsoup4"
+        ) from exc
     client = BasketballReferenceClient()
     try:
         rows = client.scrape_team_profiles(season=season)
