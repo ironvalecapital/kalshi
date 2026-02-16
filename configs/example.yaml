@@ -150,6 +150,10 @@ sports:
   vol_low_mult: 0.75
   high_vol_min_ev_cents: 2.5
   normal_min_ev_cents: 1.5
+  pyramid_winners_enabled: true
+  pyramid_edge_mult: 2.0
+  pyramid_momentum_min: 0.0
+  pyramid_max_add_contracts: 5
   simple_active_maker: true
   simple_min_spread_cents: 0
   simple_imbalance_min: 0.0

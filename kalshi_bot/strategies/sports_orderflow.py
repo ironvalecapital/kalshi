@@ -681,6 +681,8 @@ def run_sports_strategy(
                 limiter_reason = "taker_fallback"
 
         order_result: Dict[str, Any] = {}
+        pyramid_add = 0
+        pyramid_reason: Optional[str] = None
         if action in ("BID_YES", "BID_NO"):
             if is_taker_order:
                 price = (yes_ask or ((yes_bid or 0) + 1)) if action == "BID_YES" else (no_ask or ((no_bid or 0) + 1))
@@ -725,6 +727,20 @@ def run_sports_strategy(
                     use_fill_prob=settings.execution.kelly_use_fill_prob,
                     max_contracts=settings.sports.max_order_size,
                 )
+            if settings.sports.pyramid_winners_enabled:
+                aligned_pos = yes_pos if action == "BID_YES" else no_pos
+                strong_edge_floor = max(min_ev, 0.0) * settings.sports.pyramid_edge_mult
+                momentum_ok = (
+                    (action == "BID_YES" and delta_mid >= settings.sports.pyramid_momentum_min)
+                    or (action == "BID_NO" and delta_mid <= -settings.sports.pyramid_momentum_min)
+                )
+                if aligned_pos > 0 and edge_cents >= strong_edge_floor and momentum_ok:
+                    pyramid_add = min(
+                        settings.sports.pyramid_max_add_contracts,
+                        max(1, aligned_pos // 2),
+                    )
+                    size = min(settings.sports.max_order_size, size + pyramid_add)
+                    pyramid_reason = "trend_winner"
             if depth > 0:
                 depth_cap = max(1, depth // max(1, settings.sports.depth_size_divisor))
                 size = min(size, depth_cap)
@@ -924,6 +940,8 @@ def run_sports_strategy(
                 "uncertainty": uncertainty,
                 "edge_cents": edge_cents,
                 "ev_exec_cents": ev_exec,
+                "pyramid_add": pyramid_add,
+                "pyramid_reason": pyramid_reason,
             },
             "fees": {"fee_cents": fee, "maker": (not is_taker_order)},
             "fill_prob": fill_prob,

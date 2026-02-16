@@ -252,6 +252,10 @@ class SportsConfig(BaseModel):
     vol_low_mult: float = 0.75
     high_vol_min_ev_cents: float = 2.5
     normal_min_ev_cents: float = 1.5
+    pyramid_winners_enabled: bool = True
+    pyramid_edge_mult: float = 2.0
+    pyramid_momentum_min: float = 0.0
+    pyramid_max_add_contracts: int = 5
     simple_active_maker: bool = True
     simple_min_spread_cents: int = 0
     simple_imbalance_min: float = 0.0
