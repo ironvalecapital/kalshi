@@ -9,3 +9,4 @@ PyYAML>=6.0
 kalshi-python>=0.1.1
 python-dateutil>=2.9
 pytest>=8.0
+beautifulsoup4>=4.12

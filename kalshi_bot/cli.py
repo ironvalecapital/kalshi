@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 from collections import Counter
 import json
 import math
@@ -48,6 +49,8 @@ from .analytics.validation import edge_ttest
 from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 from .alerts import send_telegram
+from .adapters.basketball_reference import BasketballReferenceClient
+from .models.live_repricing import LiveState, monte_carlo_win_probability, win_probability
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -163,6 +166,98 @@ def markets(
     table.add_column("Status")
     for m in data.get("markets", []):
         table.add_row(m.get("ticker", ""), m.get("title", ""), m.get("status", ""))
+    console.print(table)
+
+
+@app.command("scrape-bball-ref")
+def scrape_bball_ref(
+    season: int = typer.Option(2026, help="NBA season year (e.g. 2026)"),
+    outdir: str = typer.Option("data/basketball_reference", help="Output directory"),
+):
+    """
+    Scrape Basketball-Reference team profiles for institutional feature research.
+    Includes:
+    - efficiency + pace
+    - home/away bias
+    - scoring splits
+    - Q4 scoring patterns
+    - red-zone conversion proxy (2P FG%)
+    """
+    client = BasketballReferenceClient()
+    try:
+        rows = client.scrape_team_profiles(season=season)
+    finally:
+        client.close()
+    if not rows:
+        console.print("No rows scraped.")
+        raise typer.Exit(1)
+
+    out = Path(outdir)
+    out.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    csv_path = out / f"nba_team_profiles_{season}_{ts}.csv"
+    json_path = out / f"nba_team_profiles_{season}_{ts}.json"
+
+    fields = list(rows[0].keys())
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    json_path.write_text(json.dumps(rows, indent=2))
+
+    table = Table(title=f"Basketball-Reference Team Profiles ({season})")
+    table.add_column("Team")
+    table.add_column("OffRtg")
+    table.add_column("DefRtg")
+    table.add_column("Pace")
+    table.add_column("HomeWin%")
+    table.add_column("AwayWin%")
+    table.add_column("Q4 Net")
+    for r in rows[:15]:
+        table.add_row(
+            str(r.get("team", "")),
+            "" if r.get("off_rtg") is None else f"{r['off_rtg']:.2f}",
+            "" if r.get("def_rtg") is None else f"{r['def_rtg']:.2f}",
+            "" if r.get("pace") is None else f"{r['pace']:.2f}",
+            "" if r.get("home_win_pct") is None else f"{100*r['home_win_pct']:.1f}%",
+            "" if r.get("away_win_pct") is None else f"{100*r['away_win_pct']:.1f}%",
+            "" if r.get("q4_net") is None else f"{r['q4_net']:.2f}",
+        )
+    console.print(table)
+    console.print(f"Wrote: {csv_path}")
+    console.print(f"Wrote: {json_path}")
+
+
+@app.command("live-reprice")
+def live_reprice(
+    score_diff: int = typer.Option(..., help="Team score - opponent score"),
+    time_remaining_sec: int = typer.Option(..., help="Seconds remaining"),
+    possession: int = typer.Option(0, help="+1 team, -1 opponent, 0 unknown"),
+    efficiency_edge: float = typer.Option(0.0, help="PPP edge (team - opp)"),
+    pace: float = typer.Option(98.0, help="Possessions per 48 minutes"),
+    market_prob: Optional[float] = typer.Option(None, help="Current market implied prob (0-1)"),
+    simulations: int = typer.Option(2000, help="Monte Carlo paths"),
+):
+    fast_p = win_probability(score_diff, time_remaining_sec, possession, efficiency_edge, pace)
+    mc_p = monte_carlo_win_probability(
+        LiveState(
+            score_diff=score_diff,
+            time_remaining_sec=time_remaining_sec,
+            possession=possession,
+            efficiency_edge=efficiency_edge,
+            pace=pace,
+        ),
+        simulations=simulations,
+    )
+    table = Table(title="Live Probability Repricing")
+    table.add_column("Metric")
+    table.add_column("Value")
+    table.add_row("Fast model P(win)", f"{fast_p:.4f}")
+    table.add_row("Monte Carlo P(win)", f"{mc_p:.4f}")
+    if market_prob is not None:
+        edge_pp = (mc_p - market_prob) * 100.0
+        table.add_row("Market implied", f"{market_prob:.4f}")
+        table.add_row("Edge (pp)", f"{edge_pp:.2f}")
     console.print(table)
 
 
@@ -788,6 +883,7 @@ def run_sports(
     market: Optional[str] = typer.Option(None, help="Override market ticker"),
     markets: Optional[str] = typer.Option(None, help="Comma-separated market tickers to run in rotation"),
     family: str = typer.Option("auto", help="Market family: auto|all|sports|crypto|finance"),
+    pyramid_off: bool = typer.Option(False, help="Disable add-to-winner pyramiding for this run"),
     stdout_events: bool = typer.Option(True, help="Print decision/order events to stdout"),
 ):
     if live:
@@ -808,6 +904,8 @@ def run_sports(
         market_list.append(market)
     # Keep live loop responsive under API throttling.
     settings = build_settings(config)
+    if pyramid_off:
+        settings.sports.pyramid_winners_enabled = False
     settings.sports.top_n = min(settings.sports.top_n, 60)
     settings.sports.max_scan_markets = min(settings.sports.max_scan_markets, 400)
     settings.sports.orderbook_probe_limit = min(settings.sports.orderbook_probe_limit, 80)
