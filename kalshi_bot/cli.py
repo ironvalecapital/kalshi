@@ -756,6 +756,8 @@ def watch_flow(
     flow = FlowFeatures()
     current_market = market
     empty_polls = 0
+    zero_depth_polls = 0
+    zero_depth_warn_every = 10
 
     def _derive_book_snapshot(ticker: str) -> Dict[str, Any]:
         ob = data_client.get_orderbook(ticker)
@@ -831,6 +833,19 @@ def watch_flow(
                 "momentum_30s": flow.momentum(30),
             }
         )
+
+        if depth_yes == 0 and depth_no == 0:
+            zero_depth_polls += 1
+            if zero_depth_polls % zero_depth_warn_every == 0:
+                console.print(
+                    {
+                        "market": current_market,
+                        "warning": "no depth on both sides (data likely stale/thin)",
+                        "zero_depth_polls": zero_depth_polls,
+                    }
+                )
+        else:
+            zero_depth_polls = 0
 
         if best_yes is None and snap["best_no_bid"] is None:
             empty_polls += 1
