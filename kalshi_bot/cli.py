@@ -6,6 +6,7 @@ from collections import Counter
 import json
 import math
 import os
+import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,7 @@ from .execution_manager import maker_ladder_cycle
 from .order_lifecycle import OrderLifecycle
 from .backtest.monte_carlo import MonteCarloConfig, run_growth_simulation, style_configs
 from .analytics.validation import edge_ttest
+from .forecasting import compare_sktime_models, print_sktime_comparison_table
 from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 from .alerts import send_telegram
@@ -1713,6 +1715,73 @@ def simulate_growth(
     table.add_row("Ruin probability", f"{100 * stats['ruin_prob']:.1f}%")
     table.add_row("70%+ DD probability", f"{100 * stats['deep_dd_prob']:.1f}%")
     console.print(table)
+
+
+@app.command("forecast-lab")
+def forecast_lab(
+    market: str = typer.Option(..., help="Kalshi ticker to evaluate"),
+    source: str = typer.Option("ticks", help="ticks|trades"),
+    horizon: int = typer.Option(3, help="Forecast horizon"),
+    min_train: int = typer.Option(60, help="Minimum training observations"),
+    step: int = typer.Option(5, help="Walk-forward step"),
+    limit: int = typer.Option(600, help="Max rows loaded from DB"),
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    settings = build_settings(config)
+    db_path = settings.db_path
+    if source not in {"ticks", "trades"}:
+        raise typer.BadParameter("source must be one of: ticks, trades")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        if source == "ticks":
+            cur.execute(
+                """
+                SELECT mid FROM ticks
+                WHERE market_id = ? AND mid IS NOT NULL
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                (market, max(50, limit)),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT price FROM market_trades
+                WHERE market_id = ? AND price IS NOT NULL
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                (market, max(50, limit)),
+            )
+        vals = [float(r[0]) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+    if len(vals) < (min_train + horizon + 5):
+        raise typer.BadParameter(
+            f"not enough {source} data for {market}. found={len(vals)} "
+            f"need_at_least={min_train + horizon + 5}"
+        )
+
+    series = list(reversed(vals))
+    scores = compare_sktime_models(
+        series,
+        horizon=horizon,
+        min_train_size=min_train,
+        step=step,
+    )
+
+    table = Table(title=f"Forecast Lab ({market})")
+    table.add_column("Model")
+    table.add_column("MAE")
+    table.add_column("RMSE")
+    table.add_column("Folds")
+    for s in scores:
+        table.add_row(s.model, f"{s.mae:.6f}", f"{s.rmse:.6f}", str(s.folds))
+    console.print(table)
+    console.print(print_sktime_comparison_table(scores))
 
 
 if __name__ == "__main__":
