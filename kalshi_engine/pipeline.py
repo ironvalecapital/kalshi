@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 
-from .btc_regime import BTCRegimeResult, classify_current_btc_regime
+from .btc_regime import BTCRegimeInputs, BTCRegimeResult, BTCScoreRegimeResult, classify_btc_regime_by_score, classify_current_btc_regime
 from .features import btc_tilt_score, build_llm_market_snapshot, emotion_spike_score
 from .internal_arb import ArbOpportunity, find_internal_kalshi_opportunities
 from .sports_bayes import SportsBayesOutput, SportsGameState, bayesian_win_probability
@@ -18,6 +18,7 @@ class MarketDecision:
     snapshot: Dict[str, Any]
     sports: Optional[SportsBayesOutput]
     btc_regime: Optional[BTCRegimeResult]
+    btc_score_regime: Optional[BTCScoreRegimeResult]
     opportunities: List[ArbOpportunity]
 
 
@@ -39,6 +40,7 @@ def build_market_decision(
     model_prob_hint: Optional[float] = None,
     sports_state: Optional[SportsGameState] = None,
     btc_returns: Optional[np.ndarray] = None,
+    btc_inputs: Optional[BTCRegimeInputs] = None,
 ) -> MarketDecision:
     rows = list(trades)
     base_snapshot = build_llm_market_snapshot(
@@ -65,6 +67,9 @@ def build_market_decision(
     btc_out: Optional[BTCRegimeResult] = None
     if btc_returns is not None and np.asarray(btc_returns).size >= 80:
         btc_out = classify_current_btc_regime(np.asarray(btc_returns, dtype=float))
+    btc_score_out: Optional[BTCScoreRegimeResult] = None
+    if btc_inputs is not None:
+        btc_score_out = classify_btc_regime_by_score(btc_inputs)
 
     updated_snapshot = build_llm_market_snapshot(
         market_ticker=market_ticker,
@@ -92,6 +97,11 @@ def build_market_decision(
     )
 
     btc_score = 0.0
+    if btc_score_out is not None:
+        btc_score = max(
+            btc_score,
+            min(3.0, float(btc_score_out.regime_score)),
+        )
     if btc_out is not None:
         # Crisis/elevated regimes receive larger tilt score by design.
         regime_vol = float(np.mean(list(btc_out.vol_by_state.values())) if btc_out.vol_by_state else 0.0)
@@ -129,6 +139,7 @@ def build_market_decision(
         snapshot=updated_snapshot.model_dump(mode="json"),
         sports=sports_out,
         btc_regime=btc_out,
+        btc_score_regime=btc_score_out,
         opportunities=opps,
     )
 
@@ -149,4 +160,6 @@ def decision_to_dict(decision: MarketDecision) -> Dict[str, Any]:
             "transition_probs": [float(x) for x in decision.btc_regime.transition_probs.tolist()],
             "vol_by_state": {str(k): float(v) for k, v in decision.btc_regime.vol_by_state.items()},
         }
+    if decision.btc_score_regime is not None:
+        out["btc_score_regime"] = asdict(decision.btc_score_regime)
     return out

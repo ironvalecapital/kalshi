@@ -8,8 +8,8 @@ Async ingestion + feature layer for LLM-assisted Kalshi trading.
 - `models.py`: typed payload models (`pydantic`).
 - `features.py`: compact market snapshot features for LLM/risk engines.
 - `sports_bayes.py`: Bayesian sports win-probability posterior.
-- `btc_regime.py`: BTC volatility regime detector using HMM.
-- `internal_arb.py`: within-Kalshi structural opportunity checks.
+- `btc_regime.py`: BTC volatility regime detector (HMM + score-based calm/expansion/panic classifier).
+- `internal_arb.py`: within-Kalshi structural opportunity checks (complementary yes/no + event basket consistency).
 - `pipeline.py`: orchestrates sports + btc + internal-arb into one decision payload.
 - `storage.py`: parquet partition sink (`date=.../market_ticker=...`).
 - `backfill.py`: historical pull for trades/candles into parquet.

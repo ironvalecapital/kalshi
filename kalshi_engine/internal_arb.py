@@ -12,6 +12,15 @@ class ArbOpportunity:
     reason: str
 
 
+@dataclass
+class EventBasketOpportunity:
+    event_ticker: str
+    total_implied_prob: float
+    gap: float
+    action: str
+    reason: str
+
+
 def complementary_arb_edge(yes_ask_cents: Optional[int], no_ask_cents: Optional[int]) -> float:
     """
     If yes_ask + no_ask < 100, a positive synthetic edge may exist.
@@ -30,6 +39,31 @@ def event_consistency_edges(market_probs: Dict[str, float], target_sum: float = 
     s = float(sum(max(0.0, min(1.0, p)) for p in market_probs.values()))
     gap = target_sum - s
     return {k: gap for k in market_probs.keys()}
+
+
+def event_basket_opportunity(
+    event_ticker: str,
+    market_probs: Dict[str, float],
+    target_sum: float = 1.0,
+    min_gap: float = 0.03,
+) -> Optional[EventBasketOpportunity]:
+    """
+    Internal Kalshi-only structural check:
+    If mutually exclusive market probabilities in one event don't sum to ~1,
+    basket opportunity may exist.
+    """
+    s = float(sum(max(0.0, min(1.0, p)) for p in market_probs.values()))
+    gap = target_sum - s
+    if abs(gap) < min_gap:
+        return None
+    action = "buy_underpriced_basket" if gap > 0 else "sell_overpriced_basket"
+    return EventBasketOpportunity(
+        event_ticker=event_ticker,
+        total_implied_prob=s,
+        gap=gap,
+        action=action,
+        reason="event_sum_probability_mispricing",
+    )
 
 
 def find_internal_kalshi_opportunities(

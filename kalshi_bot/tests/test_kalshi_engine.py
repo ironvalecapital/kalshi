@@ -1,5 +1,6 @@
 import numpy as np
 
+from kalshi_engine.btc_regime import BTCRegimeInputs, classify_btc_regime_by_score
 from kalshi_engine.bet_sizer import kelly_fraction_binary, suggest_contracts
 from kalshi_engine.monte_carlo_bayes import bayesian_probability_from_stream, monte_carlo_probability
 from kalshi_engine.pipeline import build_market_decision
@@ -61,3 +62,33 @@ def test_pipeline_outputs_mode_and_snapshot():
     )
     assert decision.mode in {"GTO", "EXPLOIT"}
     assert decision.snapshot["market_ticker"] == "KXTEST-1"
+
+
+def test_btc_score_regime_boundaries():
+    calm = classify_btc_regime_by_score(
+        BTCRegimeInputs(
+            realized_vol_1h=0.01,
+            realized_vol_4h=0.01,
+            realized_vol_24h=0.01,
+            rolling_vol_avg=0.02,
+            atr_ratio=0.9,
+            funding_z=0.1,
+            liquidation_spike_ratio=0.1,
+            orderbook_imbalance=0.1,
+        )
+    )
+    panic = classify_btc_regime_by_score(
+        BTCRegimeInputs(
+            realized_vol_1h=0.12,
+            realized_vol_4h=0.11,
+            realized_vol_24h=0.10,
+            rolling_vol_avg=0.02,
+            atr_ratio=2.0,
+            funding_z=2.8,
+            liquidation_spike_ratio=3.0,
+            orderbook_imbalance=0.8,
+            weekend_flag=True,
+        )
+    )
+    assert calm.label == "calm"
+    assert panic.label == "panic"
