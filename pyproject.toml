@@ -18,6 +18,9 @@ dependencies = [
   "PyYAML>=6.0",
   "kalshi-python>=0.1.1",
   "python-dateutil>=2.9",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "pyarrow>=16.0",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +33,7 @@ test = ["pytest>=8.0"]
 kalshi-bot = "kalshi_bot.cli:app"
 
 [tool.setuptools.packages.find]
-include = ["kalshi_bot*"]
+include = ["kalshi_bot*", "kalshi_engine*", "ensemble_engine*", "regime_engine*", "vol_engine*"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
