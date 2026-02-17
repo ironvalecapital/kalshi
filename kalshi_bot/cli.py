@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import typer
+import numpy as np
 from dateutil import parser as date_parser
 from rich.console import Console
 from rich.table import Table
@@ -53,6 +54,12 @@ from .watchlist_server import serve_watchlist
 from .alerts import send_telegram
 from .models.live_repricing import LiveState, monte_carlo_win_probability, win_probability
 from kalshi_engine.layer_backtest import run_layer_comparison
+from kalshi_engine.rl_optimizer import ContextualBanditOptimizer, RLState, controls_from_action, ev_ratio_reward, risk_adjusted_reward
+from kalshi_engine.ev_forecast import bootstrap_pnl_distribution
+from kalshi_engine.capital_board import build_capital_health_report
+from kalshi_engine.shadow_simulator import SCENARIOS, run_shadow_stress
+from kalshi_engine.capacity_model import scan_sharpe_vs_capital
+from kalshi_engine.institutional_report import export_institutional_report
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -127,6 +134,284 @@ def engine_compare(
             f"{r.max_drawdown:.3f}",
         )
     console.print(table)
+
+
+@app.command("bandit-train")
+def bandit_train(
+    episodes: int = typer.Option(3000, help="Synthetic training episodes"),
+    seed: int = typer.Option(7, help="Random seed"),
+    log_sar: bool = typer.Option(True, help="Log state-action-reward tuples to CSV"),
+):
+    """
+    Train contextual bandit for mode/kelly/edge/execution controls.
+    """
+    rng = np.random.default_rng(seed)
+    agent = ContextualBanditOptimizer(seed=seed)
+    sar_rows: List[Dict[str, Any]] = []
+    for _ in range(episodes):
+        state = RLState(
+            market_type="btc" if rng.random() < 0.45 else "sports",
+            volatility_regime="panic" if rng.random() < 0.20 else ("expansion" if rng.random() < 0.45 else "calm"),
+            liquidity_score=float(rng.uniform(0.1, 1.0)),
+            emotion_score=float(rng.uniform(0.0, 2.0)),
+            time_to_expiry_min=float(rng.uniform(5, 360)),
+            edge_size=float(rng.uniform(0.0, 0.15)),
+            spread_width=float(rng.uniform(1, 12)),
+            depth_imbalance=float(rng.uniform(-1, 1)),
+            drawdown_level=float(rng.uniform(0.0, 0.3)),
+        )
+        idx = agent.select_action_idx(state, explore=True)
+        action = agent.actions[idx]
+        controls = controls_from_action(action, state.drawdown_level)
+        base_edge = state.edge_size - controls.edge_threshold
+        style_penalty = 0.05 if (controls.execution_style == "aggressive" and state.liquidity_score < 0.35) else 0.0
+        mode_bonus = 0.03 if (controls.mode == "EXPLOIT" and state.emotion_score > 1.2) else 0.0
+        realized = base_edge + mode_bonus - style_penalty + float(rng.normal(0.0, 0.03))
+        var_pen = (0.02 + max(0.0, state.spread_width - 4.0) * 0.01)
+        dd_pen = state.drawdown_level * 0.15
+        reward = 0.5 * risk_adjusted_reward(realized, var_pen, dd_pen) + 0.5 * ev_ratio_reward(realized, max(1e-4, base_edge + 0.01))
+        agent.update(state, idx, reward)
+        if log_sar:
+            sar_rows.append(
+                {
+                    "market_type": state.market_type,
+                    "volatility_regime": state.volatility_regime,
+                    "liquidity_score": state.liquidity_score,
+                    "emotion_score": state.emotion_score,
+                    "time_to_expiry_min": state.time_to_expiry_min,
+                    "edge_size": state.edge_size,
+                    "spread_width": state.spread_width,
+                    "depth_imbalance": state.depth_imbalance,
+                    "drawdown_level": state.drawdown_level,
+                    "action_mode": action.mode,
+                    "action_kelly_multiplier": action.kelly_multiplier,
+                    "action_edge_threshold": action.edge_threshold,
+                    "action_execution_style": action.execution_style,
+                    "reward": reward,
+                }
+            )
+
+    sample = RLState(
+        market_type="btc",
+        volatility_regime="panic",
+        liquidity_score=0.32,
+        emotion_score=1.6,
+        time_to_expiry_min=25.0,
+        edge_size=0.09,
+        spread_width=6.0,
+        depth_imbalance=0.58,
+        drawdown_level=0.08,
+    )
+    best = agent.select_action(sample, explore=False)
+    tuned = controls_from_action(best, sample.drawdown_level)
+    console.print(
+        {
+            "episodes": episodes,
+            "recommended_action": {
+                "mode": best.mode,
+                "kelly_multiplier": best.kelly_multiplier,
+                "edge_threshold": best.edge_threshold,
+                "execution_style": best.execution_style,
+            },
+            "live_controls": {
+                "mode": tuned.mode,
+                "edge_threshold": tuned.edge_threshold,
+                "kelly_fraction": tuned.kelly_fraction,
+                "execution_style": tuned.execution_style,
+            },
+        }
+    )
+    if log_sar and sar_rows:
+        out_dir = Path("runs/rl")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"sar_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+        with out_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(sar_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(sar_rows)
+        console.print({"sar_log": str(out_path)})
+
+
+@app.command("ev-forward")
+def ev_forward(
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+    paths: int = typer.Option(3000, help="Monte Carlo paths"),
+    horizon: int = typer.Option(250, help="Trades horizon"),
+):
+    """
+    Forward EV and PnL distribution forecast from historical trade PnLs.
+    """
+    settings = build_settings(config)
+    ledger = Ledger(settings.db_path)
+    pnls = ledger.get_trade_pnls(limit=5000)
+    if not pnls:
+        console.print("No trade PnLs in ledger yet.")
+        return
+    out = bootstrap_pnl_distribution(pnls, n_paths=paths, horizon_trades=horizon, seed=7)
+    table = Table(title="Forward EV Forecast (Bootstrap PnL Distribution)")
+    table.add_column("Metric")
+    table.add_column("Value", justify="right")
+    table.add_row("Mean PnL", f"{out.mean_pnl:.2f}")
+    table.add_row("Std PnL", f"{out.stdev_pnl:.2f}")
+    table.add_row("P05", f"{out.p05:.2f}")
+    table.add_row("Median", f"{out.p50:.2f}")
+    table.add_row("P95", f"{out.p95:.2f}")
+    table.add_row("CVaR 5%", f"{out.cvar_05:.2f}")
+    table.add_row("Ruin Prob", f"{out.ruin_prob:.3f}")
+    console.print(table)
+
+
+@app.command("capital-board")
+def capital_board(
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    """
+    Daily capital health snapshot with Kelly safety recommendation.
+    """
+    settings = build_settings(config)
+    ledger = Ledger(settings.db_path)
+    pnls = ledger.get_trade_pnls(limit=5000)
+    if not pnls:
+        console.print("No trade PnLs in ledger yet.")
+        return
+
+    con = sqlite3.connect(settings.db_path)
+    cur = con.cursor()
+    cur.execute("SELECT expected_edge FROM decisions WHERE expected_edge IS NOT NULL ORDER BY id DESC LIMIT 5000")
+    edges = [float(r[0]) / 100.0 for r in cur.fetchall() if r[0] is not None]
+    con.close()
+
+    report = build_capital_health_report(trade_pnls=pnls, expected_edges=edges, n_paths=10000, horizon_trades=300)
+    h = report["capital_health"]
+    table = Table(title="Capital Allocation Board")
+    table.add_column("Metric")
+    table.add_column("Value", justify="right")
+    table.add_row("Expected Return 30d", f"{h['expected_return_30d']:.2f}")
+    table.add_row("Worst 5% Drawdown", f"{h['worst_5pct_drawdown']:.2f}")
+    table.add_row("Negative Month Prob", f"{h['negative_month_prob']:.3f}")
+    table.add_row("Risk of Ruin", f"{h['risk_of_ruin']:.3f}")
+    table.add_row("EV Ratio", f"{h['ev_ratio']:.3f}")
+    table.add_row("Sharpe-like", f"{h['sharpe_like']:.3f}")
+    table.add_row("Kelly Safety Factor", f"{h['kelly_safety_factor']:.3f}")
+    table.add_row("Global Kelly Rec", f"{report['global_kelly_recommendation']:.3f}")
+    table.add_row("Stress Level", str(report["stress_level"]))
+    console.print(table)
+
+
+@app.command("shadow-stress")
+def shadow_stress(
+    scenario: str = typer.Option("btc_panic", help=f"Scenario: {','.join(SCENARIOS.keys())}"),
+    paths: int = typer.Option(1000, help="Monte Carlo paths"),
+    trades_per_path: int = typer.Option(150, help="Trades per path"),
+):
+    """
+    Nightly emotional stress simulation for Sports/BTC.
+    """
+    if scenario not in SCENARIOS:
+        raise typer.BadParameter(f"scenario must be one of: {', '.join(SCENARIOS.keys())}")
+    out = run_shadow_stress(scenario_key=scenario, paths=paths, trades_per_path=trades_per_path)
+    console.print(out.__dict__)
+
+
+@app.command("capacity-scan")
+def capacity_scan(
+    edge: float = typer.Option(0.06, help="Base edge (probability points)"),
+    depth: float = typer.Option(250.0, help="Average top5 depth"),
+    spread: float = typer.Option(3.0, help="Average spread cents"),
+    vol: float = typer.Option(0.03, help="Volatility estimate"),
+):
+    """
+    Liquidity capacity model and Sharpe-vs-capital scan.
+    """
+    caps = [20.0, 200.0, 5000.0, 50000.0, 250000.0, 1000000.0]
+    out = scan_sharpe_vs_capital(caps, avg_depth_top5=depth, avg_spread=spread, volatility=vol, edge=edge)
+    table = Table(title="Sharpe vs Capital Curve")
+    table.add_column("Capital", justify="right")
+    table.add_column("OrderSize", justify="right")
+    table.add_column("Slippage", justify="right")
+    table.add_column("EffEdge", justify="right")
+    table.add_column("SharpeLike", justify="right")
+    for p in out.points:
+        table.add_row(
+            f"{p.capital:.0f}",
+            f"{p.order_size:.2f}",
+            f"{p.slippage:.4f}",
+            f"{p.effective_edge:.4f}",
+            f"{p.sharpe_like:.3f}",
+        )
+    console.print(table)
+    console.print({"recommended_max_capital": out.recommended_max_capital})
+
+
+@app.command("investor-report")
+def investor_report(
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+    out_dir: str = typer.Option("runs/investor_report", help="Output directory"),
+):
+    """
+    Export institutional summary report (MD + CSV + optional PDF).
+    """
+    settings = build_settings(config)
+    ledger = Ledger(settings.db_path)
+    pnls = ledger.get_trade_pnls(limit=5000)
+    health = build_capital_health_report(trade_pnls=pnls, expected_edges=[], n_paths=4000, horizon_trades=200)
+    payload = {
+        "strategy_overview": {
+            "venue": "Kalshi",
+            "focus": ["sports", "btc"],
+            "alpha_streams": ["probability", "exploit", "microstructure", "internal_arb", "market_making"],
+        },
+        "sharpe_history": {"sharpe_like": health["capital_health"]["sharpe_like"]},
+        "ev_ratio": health["capital_health"]["ev_ratio"],
+        "drawdown": {
+            "worst_5pct_drawdown": health["capital_health"]["worst_5pct_drawdown"],
+            "stress_level": health["stress_level"],
+        },
+        "risk_of_ruin": health["capital_health"]["risk_of_ruin"],
+        "capacity_limits": {"global_kelly_recommendation": health["global_kelly_recommendation"]},
+    }
+    files = export_institutional_report(payload, out_dir=out_dir)
+    console.print(files)
+
+
+@app.command("weekly-summary")
+def weekly_summary(
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+):
+    """
+    Weekly regime summary from recent decisions/audit rows.
+    """
+    settings = build_settings(config)
+    con = sqlite3.connect(settings.db_path)
+    cur = con.cursor()
+    cur.execute(
+        """
+        SELECT signals_json FROM decisions
+        WHERE ts >= datetime('now', '-7 day')
+        ORDER BY id DESC
+        LIMIT 5000
+        """
+    )
+    rows = [r[0] for r in cur.fetchall() if r and r[0]]
+    con.close()
+    regime_counts: Counter[str] = Counter()
+    mode_counts: Counter[str] = Counter()
+    for raw in rows:
+        try:
+            obj = json.loads(raw)
+            regime = str(obj.get("regime") or "unknown")
+            mode = str(obj.get("mode") or "unknown")
+            regime_counts[regime] += 1
+            mode_counts[mode] += 1
+        except Exception:
+            continue
+    console.print(
+        {
+            "weekly_decisions": len(rows),
+            "regime_distribution": dict(regime_counts),
+            "mode_distribution": dict(mode_counts),
+        }
+    )
 
 
 def build_clients(settings: BotSettings):
