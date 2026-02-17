@@ -52,6 +52,7 @@ from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 from .alerts import send_telegram
 from .models.live_repricing import LiveState, monte_carlo_win_probability, win_probability
+from kalshi_engine.layer_backtest import run_layer_comparison
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -96,6 +97,36 @@ def build_settings(config_path: Optional[str]) -> BotSettings:
     # Institutional hard cap: keep Kelly multiplier <= 15% until formal review says otherwise.
     settings.execution.kelly_fraction = min(settings.execution.kelly_fraction, 0.15)
     return settings
+
+
+@app.command("engine-compare")
+def engine_compare(
+    steps: int = typer.Option(2500, help="Simulation steps"),
+    bankroll: float = typer.Option(100.0, help="Starting bankroll"),
+    seed: int = typer.Option(7, help="Random seed"),
+):
+    """
+    Compare layer performance:
+    pure prob vs +exploit vs +microstructure vs +internal-arb.
+    """
+    rows = run_layer_comparison(seed=seed, steps=steps, bankroll_start=bankroll)
+    table = Table(title="Kalshi Engine Layer Backtest")
+    table.add_column("Layer")
+    table.add_column("Trades", justify="right")
+    table.add_column("WinRate", justify="right")
+    table.add_column("AvgEdge", justify="right")
+    table.add_column("PnL", justify="right")
+    table.add_column("MaxDD", justify="right")
+    for r in rows:
+        table.add_row(
+            r.name,
+            str(r.trades),
+            f"{r.win_rate:.3f}",
+            f"{r.avg_edge:.4f}",
+            f"{r.pnl:.2f}",
+            f"{r.max_drawdown:.3f}",
+        )
+    console.print(table)
 
 
 def build_clients(settings: BotSettings):
