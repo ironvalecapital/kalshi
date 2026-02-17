@@ -2,6 +2,7 @@ import numpy as np
 
 from kalshi_engine.btc_regime import BTCRegimeInputs, classify_btc_regime_by_score
 from kalshi_engine.bet_sizer import kelly_fraction_binary, suggest_contracts
+from kalshi_engine.internal_arb import nested_probability_opportunity, time_derivative_opportunity, yes_no_bid_sum_opportunity
 from kalshi_engine.monte_carlo_bayes import bayesian_probability_from_stream, monte_carlo_probability
 from kalshi_engine.pipeline import build_market_decision
 from kalshi_engine.sports_bayes import SportsGameState, bayesian_win_probability
@@ -92,3 +93,29 @@ def test_btc_score_regime_boundaries():
     )
     assert calm.label == "calm"
     assert panic.label == "panic"
+
+
+def test_yes_no_bid_sum_opportunity_detects_under_and_over():
+    under = yes_no_bid_sum_opportunity("KXTEST-2", yes_bid_cents=47, no_bid_cents=50, min_edge_cents=1.0)
+    over = yes_no_bid_sum_opportunity("KXTEST-2", yes_bid_cents=55, no_bid_cents=48, min_edge_cents=1.0)
+    assert under is not None and under.side == "buy_both"
+    assert over is not None and over.side == "sell_both"
+
+
+def test_structural_constraints_detect_violations():
+    nested = nested_probability_opportunity(
+        parent_label="team_wins",
+        parent_prob=0.58,
+        child_label="team_wins_by_3",
+        child_prob=0.67,
+        min_gap=0.01,
+    )
+    temporal = time_derivative_opportunity(
+        intraday_label="btc_4pm_above_x",
+        intraday_prob=0.62,
+        close_label="btc_close_above_x",
+        close_prob=0.50,
+        min_gap=0.01,
+    )
+    assert nested is not None and nested.reason == "nested_probability_violation"
+    assert temporal is not None and temporal.reason == "time_derivative_violation"

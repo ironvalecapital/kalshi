@@ -21,6 +21,16 @@ class EventBasketOpportunity:
     reason: str
 
 
+@dataclass
+class StructuralConstraintOpportunity:
+    constraint: str
+    lhs: float
+    rhs: float
+    gap: float
+    action: str
+    reason: str
+
+
 def complementary_arb_edge(yes_ask_cents: Optional[int], no_ask_cents: Optional[int]) -> float:
     """
     If yes_ask + no_ask < 100, a positive synthetic edge may exist.
@@ -28,6 +38,37 @@ def complementary_arb_edge(yes_ask_cents: Optional[int], no_ask_cents: Optional[
     if yes_ask_cents is None or no_ask_cents is None:
         return 0.0
     return float(100 - (yes_ask_cents + no_ask_cents))
+
+
+def yes_no_bid_sum_opportunity(
+    market_ticker: str,
+    yes_bid_cents: Optional[int],
+    no_bid_cents: Optional[int],
+    min_edge_cents: float = 1.0,
+) -> Optional[ArbOpportunity]:
+    """
+    Internal structural check on same market bid books:
+    - yes_bid + no_bid < 100: synthetic underpricing (buy both sides if executable)
+    - yes_bid + no_bid > 100: synthetic overpricing (sell both sides if executable)
+    """
+    if yes_bid_cents is None or no_bid_cents is None:
+        return None
+    s = float(yes_bid_cents + no_bid_cents)
+    if s < (100.0 - min_edge_cents):
+        return ArbOpportunity(
+            market_ticker=market_ticker,
+            side="buy_both",
+            edge_cents=100.0 - s,
+            reason="yes_no_bid_sum_under_100",
+        )
+    if s > (100.0 + min_edge_cents):
+        return ArbOpportunity(
+            market_ticker=market_ticker,
+            side="sell_both",
+            edge_cents=s - 100.0,
+            reason="yes_no_bid_sum_over_100",
+        )
+    return None
 
 
 def event_consistency_edges(market_probs: Dict[str, float], target_sum: float = 1.0) -> Dict[str, float]:
@@ -63,6 +104,84 @@ def event_basket_opportunity(
         gap=gap,
         action=action,
         reason="event_sum_probability_mispricing",
+    )
+
+
+def nested_probability_opportunity(
+    parent_label: str,
+    parent_prob: float,
+    child_label: str,
+    child_prob: float,
+    min_gap: float = 0.01,
+) -> Optional[StructuralConstraintOpportunity]:
+    """
+    For nested outcomes: P(child) must be <= P(parent).
+    Example: P(team wins by >3) <= P(team wins)
+    """
+    p = max(0.0, min(1.0, float(parent_prob)))
+    c = max(0.0, min(1.0, float(child_prob)))
+    gap = c - p
+    if gap <= min_gap:
+        return None
+    return StructuralConstraintOpportunity(
+        constraint=f"P({child_label}) <= P({parent_label})",
+        lhs=c,
+        rhs=p,
+        gap=gap,
+        action="sell_child_buy_parent",
+        reason="nested_probability_violation",
+    )
+
+
+def time_derivative_opportunity(
+    intraday_label: str,
+    intraday_prob: float,
+    close_label: str,
+    close_prob: float,
+    min_gap: float = 0.01,
+) -> Optional[StructuralConstraintOpportunity]:
+    """
+    Temporal consistency check requested by strategy:
+    P(intraday > X) <= P(close > X)
+    """
+    i = max(0.0, min(1.0, float(intraday_prob)))
+    c = max(0.0, min(1.0, float(close_prob)))
+    gap = i - c
+    if gap <= min_gap:
+        return None
+    return StructuralConstraintOpportunity(
+        constraint=f"P({intraday_label}) <= P({close_label})",
+        lhs=i,
+        rhs=c,
+        gap=gap,
+        action="sell_intraday_buy_close",
+        reason="time_derivative_violation",
+    )
+
+
+def spread_compression_signal(
+    spread_cents: Optional[float],
+    spread_baseline_cents: float,
+    no_fundamental_update: bool,
+    depth_total_top5: int,
+    thin_depth_threshold: int = 150,
+    widen_mult: float = 1.8,
+) -> Optional[ArbOpportunity]:
+    """
+    Signal for liquidity-provision reversion:
+    spread is unusually wide, book is thin, and no fresh fundamental catalyst.
+    """
+    if spread_cents is None or spread_baseline_cents <= 0 or not no_fundamental_update:
+        return None
+    if depth_total_top5 > thin_depth_threshold:
+        return None
+    if float(spread_cents) < float(spread_baseline_cents) * float(widen_mult):
+        return None
+    return ArbOpportunity(
+        market_ticker="MULTI",
+        side="post_both_sides",
+        edge_cents=float(spread_cents) - float(spread_baseline_cents),
+        reason="spread_compression_reversion",
     )
 
 

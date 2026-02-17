@@ -7,7 +7,7 @@ import numpy as np
 
 from .btc_regime import BTCRegimeInputs, BTCRegimeResult, BTCScoreRegimeResult, classify_btc_regime_by_score, classify_current_btc_regime
 from .features import btc_tilt_score, build_llm_market_snapshot, emotion_spike_score
-from .internal_arb import ArbOpportunity, find_internal_kalshi_opportunities
+from .internal_arb import ArbOpportunity, find_internal_kalshi_opportunities, yes_no_bid_sum_opportunity
 from .sports_bayes import SportsBayesOutput, SportsGameState, bayesian_win_probability
 
 
@@ -132,6 +132,14 @@ def build_market_decision(
         model_prob=float(updated_snapshot.model.get("model_prob", 0.5)),
         edge_threshold_cents=2.0,
     )
+    yn = yes_no_bid_sum_opportunity(
+        market_ticker=market_ticker,
+        yes_bid_cents=None if best_yes is None else int(best_yes),
+        no_bid_cents=None if best_no is None else int(best_no),
+        min_edge_cents=1.0,
+    )
+    if yn is not None:
+        opps.append(yn)
 
     return MarketDecision(
         market_ticker=market_ticker,
