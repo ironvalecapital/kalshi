@@ -154,6 +154,15 @@ sports:
   vol_baseline_window_sec: 1800
   vol_high_mult: 1.5
   vol_low_mult: 0.75
+  trend_quality_min: 0.10
+  trend_quality_high_vol_min: 0.20
+  vol_target_variance: 1.0e-6
+  vol_scaling_enabled: true
+  vol_scaling_method: "ewma"
+  vol_scaling_window: 120
+  regime_size_mult_low_vol: 1.0
+  regime_size_mult_normal: 0.9
+  regime_size_mult_high_vol: 0.7
   high_vol_min_ev_cents: 2.5
   normal_min_ev_cents: 1.5
   pyramid_winners_enabled: true

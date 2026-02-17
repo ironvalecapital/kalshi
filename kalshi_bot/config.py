@@ -256,6 +256,15 @@ class SportsConfig(BaseModel):
     vol_baseline_window_sec: int = 1800
     vol_high_mult: float = 1.5
     vol_low_mult: float = 0.75
+    trend_quality_min: float = 0.10
+    trend_quality_high_vol_min: float = 0.20
+    vol_target_variance: float = 1e-6
+    vol_scaling_enabled: bool = True
+    vol_scaling_method: Literal["ewma", "garch"] = "ewma"
+    vol_scaling_window: int = 120
+    regime_size_mult_low_vol: float = 1.0
+    regime_size_mult_normal: float = 0.9
+    regime_size_mult_high_vol: float = 0.7
     high_vol_min_ev_cents: float = 2.5
     normal_min_ev_cents: float = 1.5
     pyramid_winners_enabled: bool = True

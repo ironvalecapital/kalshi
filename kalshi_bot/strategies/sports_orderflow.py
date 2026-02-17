@@ -8,6 +8,7 @@ from pathlib import Path
 from dateutil import parser as date_parser
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+import numpy as np
 
 from ..config import BotSettings
 from ..data_rest import KalshiDataClient, KalshiRestError
@@ -28,6 +29,11 @@ from ..market_selector import pick_sports_candidates
 from ..spread_scanner import scan_spreads
 from ..orderbook_live import OrderbookState
 from ..risk import RiskManager
+
+try:
+    from vol_engine import position_size_scalar
+except Exception:  # pragma: no cover - optional runtime module path
+    position_size_scalar = None  # type: ignore[assignment]
 
 SIGMOID_DIAG_THRESHOLD = 12.0
 
@@ -126,6 +132,47 @@ def _vwap_yes(trades: list[dict], window_sec: int = 300) -> Optional[float]:
     if volume <= 0:
         return None
     return (notional / volume) / 100.0
+
+
+def _trend_quality(
+    imbalance: float,
+    delta_mid: float,
+    bid_mom: float,
+    ask_mom: float,
+    spread: int,
+    spread_trend: float,
+) -> float:
+    """
+    Trend qualification proxy (0..1):
+    prefers directional pressure + momentum with tighter/stable spread.
+    """
+    pressure = min(1.0, abs(float(imbalance)))
+    momentum = min(1.0, max(0.0, abs(float(delta_mid)) + 0.5 * abs(float(bid_mom - ask_mom))))
+    spread_quality = 1.0 / (1.0 + max(0.0, float(spread)))
+    spread_stability = 1.0 / (1.0 + abs(float(spread_trend)))
+    score = 0.45 * pressure + 0.30 * momentum + 0.15 * spread_quality + 0.10 * spread_stability
+    return max(0.0, min(1.0, score))
+
+
+def _returns_from_recent_trades(trades: list[dict], max_points: int = 200) -> list[float]:
+    prices: list[float] = []
+    for tr in trades[-max_points:]:
+        p = tr.get("yes_price") or tr.get("price")
+        if p is None:
+            continue
+        try:
+            prices.append(float(p) / 100.0)
+        except (TypeError, ValueError):
+            continue
+    if len(prices) < 3:
+        return []
+    rets: list[float] = []
+    prev = prices[0]
+    for x in prices[1:]:
+        if prev > 0 and x > 0:
+            rets.append(math.log(x / prev))
+        prev = x
+    return rets
 
 
 def _auto_pick_from_summary(settings: BotSettings, data_client: KalshiDataClient) -> Optional[str]:
@@ -657,8 +704,11 @@ def run_sports_strategy(
         min_ev = settings.sports.min_ev_cents
         min_fill_prob = 0.1
         max_spread_cents = settings.sports.resolved_max_spread_cents()
+        trend_quality = _trend_quality(imbalance, delta_mid, bid_mom, ask_mom, spread, spread_trend)
+        min_trend_quality = settings.sports.trend_quality_min
         if regime == "high_vol":
             min_ev = max(min_ev, settings.sports.high_vol_min_ev_cents)
+            min_trend_quality = settings.sports.trend_quality_high_vol_min
         else:
             min_ev = max(min_ev, settings.sports.normal_min_ev_cents)
         if family == "crypto":
@@ -682,6 +732,9 @@ def run_sports_strategy(
                     limiter_reason = "imbalance_too_low"
                 else:
                     action = "BID_NO" if imbalance > 0 else "BID_YES"
+                if trend_quality < min_trend_quality:
+                    action = "ABSTAIN"
+                    limiter_reason = "trend_not_qualified"
                 edge_cents = max(0.0, (spread / 2.0) - fee)
                 # Penalize if spread is widening fast.
                 if spread_trend > 0.5:
@@ -694,6 +747,9 @@ def run_sports_strategy(
         else:
             if ev_exec >= min_ev and spread <= max_spread_cents and fill_prob > min_fill_prob:
                 action = "BID_YES" if edge_cents >= 0 else "BID_NO"
+                if trend_quality < min_trend_quality:
+                    action = "ABSTAIN"
+                    limiter_reason = "trend_not_qualified"
             else:
                 limiter_reason = "ev_or_fill_or_spread_gate"
 
@@ -755,6 +811,12 @@ def run_sports_strategy(
         order_result: Dict[str, Any] = {}
         pyramid_add = 0
         pyramid_reason: Optional[str] = None
+        regime_mult = (
+            settings.sports.regime_size_mult_high_vol
+            if regime == "high_vol"
+            else (settings.sports.regime_size_mult_low_vol if regime == "low_vol" else settings.sports.regime_size_mult_normal)
+        )
+        vol_mult = 1.0
         if action in ("BID_YES", "BID_NO"):
             if is_taker_order:
                 price = (yes_ask or ((yes_bid or 0) + 1)) if action == "BID_YES" else (no_ask or ((no_bid or 0) + 1))
@@ -813,6 +875,20 @@ def run_sports_strategy(
                     )
                     size = min(settings.sports.max_order_size, size + pyramid_add)
                     pyramid_reason = "trend_winner"
+            if settings.sports.vol_scaling_enabled and position_size_scalar is not None:
+                rets = _returns_from_recent_trades(trades, max_points=max(30, settings.sports.vol_scaling_window))
+                if len(rets) >= 30:
+                    try:
+                        vol_mult = float(
+                            position_size_scalar(
+                                returns=np.asarray(rets, dtype=float),
+                                target_var=settings.sports.vol_target_variance,
+                                method=settings.sports.vol_scaling_method,
+                            )
+                        )
+                    except Exception:
+                        vol_mult = 1.0
+            size = int(max(1, min(settings.sports.max_order_size, round(size * regime_mult * vol_mult))))
             if depth > 0:
                 depth_cap = max(1, depth // max(1, settings.sports.depth_size_divisor))
                 size = min(size, depth_cap)
@@ -1005,6 +1081,9 @@ def run_sports_strategy(
                 "crypto_pulse_adj": crypto_pulse_adj,
                 "arb_opportunity": arb_opportunity,
                 "arb_spread_cents": arb_spread_cents,
+                "trend_quality": trend_quality,
+                "regime_size_mult": regime_mult,
+                "vol_size_mult": vol_mult,
             },
             "model": {
                 "p_next": p_next,
