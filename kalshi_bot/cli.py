@@ -61,6 +61,7 @@ from kalshi_engine.capital_board import build_capital_health_report
 from kalshi_engine.shadow_simulator import SCENARIOS, run_shadow_stress
 from kalshi_engine.capacity_model import scan_sharpe_vs_capital
 from kalshi_engine.institutional_report import export_institutional_report
+from kalshi_engine.btc_regime_train import find_latest_polygon_dir, prepare_and_train_polygon
 
 app = typer.Typer(add_completion=False)
 console = Console()
@@ -140,6 +141,28 @@ def export_squiggle_sports(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(program, encoding="utf-8")
     console.print({"markets_exported": len(rows), "output": str(out_path)})
+
+
+@app.command("btc-regime-train")
+def btc_regime_train(
+    input_dir: Optional[str] = typer.Option(None, help="Polygon BTC folder (default: latest *_polygon)"),
+    out_dir: str = typer.Option("data/bitcoin/processed", help="Processed output directory"),
+):
+    """
+    Merge Polygon BTC data to parquet and train BTC HMM regime summary.
+    """
+    resolved = Path(input_dir) if input_dir else find_latest_polygon_dir("data/bitcoin")
+    if resolved is None or not resolved.exists():
+        raise typer.BadParameter("No Polygon BTC folder found. Run polygon download first.")
+    out = prepare_and_train_polygon(input_dir=str(resolved), out_dir=out_dir)
+    console.print(
+        {
+            "input_dir": str(resolved),
+            "rows_merged": out.rows,
+            "parquet_path": out.parquet_path,
+            "summary_path": out.summary_path,
+        }
+    )
 
 
 @app.command("engine-compare")
