@@ -53,6 +53,7 @@ from .watchlist import build_watchlist
 from .watchlist_server import serve_watchlist
 from .alerts import send_telegram
 from .models.live_repricing import LiveState, monte_carlo_win_probability, win_probability
+from .squiggle_export import is_focus_sports_market, normalize_market_row, render_squiggle_program
 from kalshi_engine.layer_backtest import run_layer_comparison
 from kalshi_engine.rl_optimizer import ContextualBanditOptimizer, RLState, controls_from_action, ev_ratio_reward, risk_adjusted_reward
 from kalshi_engine.ev_forecast import bootstrap_pnl_distribution
@@ -104,6 +105,41 @@ def build_settings(config_path: Optional[str]) -> BotSettings:
     # Institutional hard cap: keep Kelly multiplier <= 15% until formal review says otherwise.
     settings.execution.kelly_fraction = min(settings.execution.kelly_fraction, 0.15)
     return settings
+
+
+@app.command("export-squiggle-sports")
+def export_squiggle_sports(
+    config: Optional[str] = typer.Option(None, help="Path to YAML config"),
+    out: str = typer.Option("runs/squiggle/kalshi_sports_focus.squiggle", help="Output .squiggle file"),
+    max_pages: int = typer.Option(15, help="Max /markets pages"),
+    per_page: int = typer.Option(200, help="Markets per page"),
+):
+    """
+    Export Kalshi sports/UFC/basketball-focused markets into a Squiggle starter program.
+    """
+    settings = build_settings(config)
+    _, data_client = build_clients(settings)
+    rows = []
+    cursor = None
+    pages = 0
+    while pages < max_pages:
+        resp = data_client.list_markets(status="open", limit=per_page, cursor=cursor)
+        markets = resp.get("markets", []) or []
+        if not markets:
+            break
+        for m in markets:
+            if is_focus_sports_market(m):
+                rows.append(normalize_market_row(m))
+        cursor = resp.get("cursor")
+        pages += 1
+        if not cursor:
+            break
+    rows.sort(key=lambda x: (x.spread_cents is None, x.spread_cents if x.spread_cents is not None else 999, x.ticker))
+    program = render_squiggle_program(rows)
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(program, encoding="utf-8")
+    console.print({"markets_exported": len(rows), "output": str(out_path)})
 
 
 @app.command("engine-compare")
